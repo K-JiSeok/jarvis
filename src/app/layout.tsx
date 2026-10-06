@@ -8,8 +8,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "MY COUPILOT",
-    template: "%s · MY COUPILOT",
+    default: "JARVIS",
+    template: "%s · JARVIS",
   },
   description: "쿠팡 상품 발굴 및 분석 (개인용)",
   robots: { index: false, follow: false },
