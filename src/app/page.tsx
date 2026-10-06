@@ -1,11 +1,11 @@
 import { MockBanner } from "@/components/common/mock-banner";
 import { PageHeader } from "@/components/common/page-header";
 import { RecommendationCard } from "@/components/dashboard/recommendation-card";
-import { MOCK_DASHBOARD } from "@/lib/mock/dashboard";
+import { getDashboardData } from "@/lib/repositories/dashboard";
 
-export default function DashboardPage() {
-  // PHASE 8에서 실제 점수 엔진 결과로 교체한다.
-  const data = MOCK_DASHBOARD;
+export default async function DashboardPage() {
+  // PHASE 8에서 실제 점수 엔진 결과(LIVE)로 교체한다. 그전까지는 DEMO.
+  const data = await getDashboardData();
 
   return (
     <>

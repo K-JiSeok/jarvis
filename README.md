@@ -31,9 +31,25 @@ src/
 ├─ config/              # 메뉴, 점수 가중치 (조정 가능한 상수)
 ├─ lib/
 │  ├─ scoring/          # 점수 엔진 (PHASE 7) — UI·수집 방식과 분리
-│  ├─ mock/             # DEMO 데이터 (실데이터 아님)
+│  ├─ supabase/         # client(브라우저) / server / admin(서버 전용, service role)
+│  ├─ repositories/     # UI → repository → Supabase (페이지에서 직접 쿼리하지 않음)
+│  ├─ mock/             # DEMO 데이터 (실데이터 아님, DB에 넣지 않음)
 │  └─ format.ts
-└─ types/               # 도메인 타입 (source_type, confidence 포함)
+└─ types/               # common.ts(앱 타입) · database.ts(DB 자동 생성) · db.ts(연결)
+supabase/
+├─ migrations/          # DB 스키마 (0001 ~ 0012, 순서대로 적용)
+└─ verify/              # DB 검증 SQL (BEGIN … ROLLBACK)
+scripts/db/             # PGlite 로컬 검증 · 타입 생성
+```
+
+## DB (Supabase)
+
+설계: [docs/PHASE2_DB_DESIGN.md](docs/PHASE2_DB_DESIGN.md) · 구현 결과: [docs/PHASE2_2_REPORT.md](docs/PHASE2_2_REPORT.md)
+
+```bash
+npm run db:verify        # 로컬 PGlite 에 마이그레이션 적용 + 검증 (Docker 불필요)
+npm run db:types:local   # 마이그레이션 기준 src/types/database.ts 생성
+npm run db:types         # Supabase 프로젝트 연결 후: 공식 supabase gen types
 ```
 
 ## 데이터 원칙
@@ -47,7 +63,7 @@ src/
 | PHASE | 내용 | 상태 |
 |---|---|---|
 | 1 | 프로젝트 초기화 및 기본 UI | ✅ |
-| 2 | Supabase DB 설계 및 연결 | |
+| 2 | Supabase DB 설계 및 연결 | 설계 ✅ · 마이그레이션 ✅ · 실제 프로젝트 연결 대기 |
 | 3 | 키워드 데이터 구조 | |
 | 4 | 상품 데이터 구조 | |
 | 5 | 경쟁상품 데이터 구조 | |
