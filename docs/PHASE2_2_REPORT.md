@@ -203,3 +203,24 @@ categories, keywords, keyword_snapshots, products, product_snapshots, keyword_pr
   - 로그인 상태에서 repository 1개(예: `listCurrentScores`)로 RLS가 적용된 실제 조회 확인
   - 12-2의 1·3번 결정 반영 여부 확정
 - **그다음 PHASE 3:** 키워드 데이터 구조. 키워드 등록·정규화, `upsert_keyword_snapshot` 기반 입력, `v_keyword_latest` 화면 연결.
+
+---
+
+## 15. 운영 DB 적용 기록 (2026-10-07)
+
+| 항목 | 결과 |
+|---|---|
+| 프로젝트 | JARVIS (`ogfldnhumdqawcbunehl`), 서울 리전, PostgreSQL 17.11 |
+| 적용 방법 | Supabase 커넥터 `apply_migration`으로 12개를 순서대로 적용, 모두 성공 |
+| 파일 이름 | 로컬 `0001_…` ~ `0012_…`를 Supabase에 기록된 버전 번호로 변경. 예: `20261007003705_extensions_and_domains.sql`. 이후 `supabase db push` / `migration list`와 일치 |
+| 스키마 일치 | `scripts/db/fingerprint.sql`로 로컬(PGlite)과 운영 DB를 비교: 함수 7 · 뷰 4 · 컬럼 313 · 제약 137 · 정책 73 · 트리거 10 · 코멘트 51 · DOMAIN 5 · seed **완전 일치**. 인덱스 83개 중 1개는 표기만 다름(운영 DB가 `extensions.gin_trgm_ops`를 `gin_trgm_ops`로 표시) |
+| 운영 DB 검증 | `phase2_verify.sql` **108개 전부 통과** (12-3의 "SQL Editor 미검증" 항목 해소). 실행 후 auth.users 0명, 사용자 데이터 0행, scoring_versions는 `v1`만 남음 → 테스트 흔적 없음 |
+| Security Advisor | **경고 0건** |
+| Performance Advisor | `unindexed_foreign_keys` 41건(12-2-4에서 예상), `unused_index` 18건(데이터가 없어서 생기는 정상 결과) |
+| TypeScript | `src/types/database.ts`를 Supabase 공식 생성 타입으로 교체(PostgREST 14.18). tsc · lint · build 통과 |
+
+공식 타입과 로컬 생성기의 차이: 공식 타입은 생성 컬럼(`sales_results.net_profit`, `net_margin_rate`)을 Insert에서 `never`로 막지 않는다. 그래도 DB가 직접 거부하므로 값이 잘못 들어가지는 않는다.
+
+남은 작업 (직접):
+1. Authentication → "Allow new users to sign up" 끄기, 본인 계정 1개 생성
+2. `.env.local` 작성: URL, publishable(anon) 키, secret(service role) 키

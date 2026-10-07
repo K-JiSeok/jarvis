@@ -37,7 +37,7 @@ src/
 │  └─ format.ts
 └─ types/               # common.ts(앱 타입) · database.ts(DB 자동 생성) · db.ts(연결)
 supabase/
-├─ migrations/          # DB 스키마 (0001 ~ 0012, 순서대로 적용)
+├─ migrations/          # DB 스키마 (Supabase 적용 버전 번호 = 파일 이름, 순서대로 적용)
 └─ verify/              # DB 검증 SQL (BEGIN … ROLLBACK)
 scripts/db/             # PGlite 로컬 검증 · 타입 생성
 ```
@@ -49,7 +49,7 @@ scripts/db/             # PGlite 로컬 검증 · 타입 생성
 ```bash
 npm run db:verify        # 로컬 PGlite 에 마이그레이션 적용 + 검증 (Docker 불필요)
 npm run db:types:local   # 마이그레이션 기준 src/types/database.ts 생성
-npm run db:types         # Supabase 프로젝트 연결 후: 공식 supabase gen types
+npm run db:types         # 운영 DB 기준 공식 타입 (npx supabase login 필요)
 ```
 
 ## 데이터 원칙
@@ -63,7 +63,7 @@ npm run db:types         # Supabase 프로젝트 연결 후: 공식 supabase gen
 | PHASE | 내용 | 상태 |
 |---|---|---|
 | 1 | 프로젝트 초기화 및 기본 UI | ✅ |
-| 2 | Supabase DB 설계 및 연결 | 설계 ✅ · 마이그레이션 ✅ · 실제 프로젝트 연결 대기 |
+| 2 | Supabase DB 설계 및 연결 | 설계 ✅ · 마이그레이션 ✅ · 운영 DB 적용·검증 ✅ (앱 .env.local 연결 대기) |
 | 3 | 키워드 데이터 구조 | |
 | 4 | 상품 데이터 구조 | |
 | 5 | 경쟁상품 데이터 구조 | |
