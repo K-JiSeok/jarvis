@@ -2,14 +2,12 @@
 
 import { useActionState } from "react";
 
-import { saveSnapshotAction, type FormState } from "@/app/keywords/actions";
+import { saveSnapshotAction } from "@/app/keywords/actions";
+import { FormMessage } from "@/components/common/form-message";
 import { Button } from "@/components/ui/button";
 import { Input, Label, NativeSelect } from "@/components/ui/input";
+import { INITIAL_FORM_STATE } from "@/lib/forms";
 import { CONFIDENCE_LABELS, CONFIDENCE_LEVELS } from "@/types/common";
-
-import { FormMessage } from "./form-message";
-
-const INITIAL: FormState = { ok: false, message: null };
 
 interface Field {
   name: string;
@@ -24,9 +22,9 @@ interface Field {
 const FIELDS: Field[] = [
   { name: "search_volume", label: "월 검색량", step: "1", min: 0 },
   { name: "search_volume_previous", label: "이전(전월) 검색량", step: "1", min: 0 },
-  { name: "search_growth_rate", label: "검색량 증감", unit: "%", step: "0.01", min: -100, hint: "비우면 검색량 두 값으로 계산" },
+  { name: "search_growth_rate", label: "검색량 증감", unit: "%", step: "0.01", min: -100, hint: "검색량 두 값을 함께 입력하고 비우면 계산" },
   { name: "coupang_product_count", label: "쿠팡 상품 수", step: "1", min: 0 },
-  { name: "competition_intensity", label: "경쟁강도", step: "0.0001", min: 0, hint: "상품 수 ÷ 검색량. 비우면 자동 계산" },
+  { name: "competition_intensity", label: "경쟁강도", step: "0.0001", min: 0, hint: "상품 수 ÷ 검색량. 두 값을 함께 입력하고 비우면 계산" },
   { name: "wing_ratio", label: "WING 비율", unit: "%", step: "0.01", min: 0, max: 100 },
   { name: "rocket_ratio", label: "로켓 비율", unit: "%", step: "0.01", min: 0, max: 100 },
   { name: "brand_concentration", label: "브랜드 집중도", unit: "%", step: "0.01", min: 0, max: 100, hint: "상위 N개 중 최다 브랜드 점유율" },
@@ -41,7 +39,7 @@ const FIELDS: Field[] = [
  * 빈 칸은 "모름"이다. 같은 날짜에 다시 저장하면 입력한 칸만 갱신되고 빈 칸은 기존 값을 유지한다.
  */
 export function SnapshotForm({ keywordId, today }: { keywordId: string; today: string }) {
-  const [state, action, pending] = useActionState(saveSnapshotAction.bind(null, keywordId), INITIAL);
+  const [state, action, pending] = useActionState(saveSnapshotAction.bind(null, keywordId), INITIAL_FORM_STATE);
 
   return (
     <form action={action} className="space-y-4">

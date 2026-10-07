@@ -40,6 +40,8 @@ export interface KeywordSummary {
   category: CategoryOption | null;
   isTracking: boolean;
   memo: string | null;
+  /** keywords.updated_at (상세 조회 때만). 수정 폼 다시 그리기 기준 */
+  updatedAt: string | null;
   snapshotCount: number;
   /** 가장 최근 스냅샷 수집일 (YYYY-MM-DD, KST) */
   latestCapturedOn: string | null;

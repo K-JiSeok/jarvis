@@ -9,11 +9,13 @@ import { PageHeader } from "@/components/common/page-header";
 import { KeywordSettingsForm } from "@/components/keywords/keyword-settings-form";
 import { SnapshotForm } from "@/components/keywords/snapshot-form";
 import { SnapshotHistory } from "@/components/keywords/snapshot-history";
+import { RankHistory } from "@/components/products/rank-history";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUser } from "@/lib/auth";
 import { formatDecimal, formatNumber, formatPercent, formatShortDate, formatSignedPercent, formatWon } from "@/lib/format";
 import { getKeywordDetail, listCategories } from "@/lib/repositories/keywords";
+import { listRanksForKeyword } from "@/lib/repositories/ranks";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import type { DataPoint } from "@/types/common";
 import type { KeywordMetrics } from "@/types/keyword";
@@ -51,7 +53,7 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
   }
 
   if (!UUID.test(id)) notFound();
-  const [keyword, categories] = await Promise.all([getKeywordDetail(id), listCategories()]);
+  const [keyword, categories, ranks] = await Promise.all([getKeywordDetail(id), listCategories(), listRanksForKeyword(id)]);
   // RLS: 다른 사용자의 키워드는 조회되지 않으므로 존재하지 않는 것과 같다
   if (!keyword) notFound();
 
@@ -84,7 +86,8 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <KeywordSettingsForm keyword={keyword} categories={categories} />
+            {/* 저장 후 React 가 폼을 이전 기본값으로 reset 하므로, 서버 값이 바뀌면 새로 그린다 */}
+            <KeywordSettingsForm key={keyword.updatedAt ?? ""} keyword={keyword} categories={categories} />
           </CardContent>
         </Card>
 
@@ -113,6 +116,16 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
         </CardHeader>
         <CardContent>
           <SnapshotForm keywordId={keyword.id} today={today} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>이 키워드의 상품 순위</CardTitle>
+          <CardDescription>상품 상세 화면에서 입력한 검색 순위 (최신 수집일 → 자연 노출 → 순위 순). 상품은 복제되지 않고 연결만 됩니다.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RankHistory ranks={ranks} mode="keyword" />
         </CardContent>
       </Card>
 

@@ -1,0 +1,212 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ArrowLeft, ExternalLink } from "lucide-react";
+
+import { DataPointValue } from "@/components/common/data-point-value";
+import { LoginRequired } from "@/components/common/login-required";
+import { PageHeader } from "@/components/common/page-header";
+import { deliveryLabel, sellerLabel, withPeriod } from "@/components/products/labels";
+import { ProductEditForm } from "@/components/products/product-edit-form";
+import { ProductSnapshotForm } from "@/components/products/product-snapshot-form";
+import { ProductSnapshotHistory } from "@/components/products/product-snapshot-history";
+import { RankForm } from "@/components/products/rank-form";
+import { RankHistory } from "@/components/products/rank-history";
+import {
+  WatchlistEvents,
+  WatchlistReleaseButton,
+  WatchlistStatusBadge,
+  WatchlistStatusForm,
+} from "@/components/watchlist/watchlist-controls";
+import { WatchlistAddForm, WatchlistMemoForm } from "@/components/watchlist/watchlist-forms";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getCurrentUser } from "@/lib/auth";
+import { formatNumber, formatPercent, formatShortDate, formatWon } from "@/lib/format";
+import { listCategories, listKeywordOptions } from "@/lib/repositories/keywords";
+import { getProductDetail, kstToday } from "@/lib/repositories/products";
+import { getWatchlistForProduct, listWatchlistEvents } from "@/lib/repositories/watchlist";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import type { DataPoint } from "@/types/common";
+import { LIFECYCLE_LABELS, type PeriodDataPoint, type ProductMetrics } from "@/types/product";
+
+export const metadata: Metadata = { title: "상품 상세" };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type Metric =
+  | { key: keyof ProductMetrics; label: string; kind: "number"; format: (v: number) => string }
+  | { key: keyof ProductMetrics; label: string; kind: "text"; format: (v: string) => string }
+  | { key: keyof ProductMetrics; label: string; kind: "period"; format: (v: number) => string };
+
+const METRICS: Metric[] = [
+  { key: "price", label: "판매가", kind: "number", format: formatWon },
+  { key: "originalPrice", label: "정가", kind: "number", format: formatWon },
+  { key: "discountRate", label: "할인율", kind: "number", format: (v) => formatPercent(v) },
+  { key: "reviewCount", label: "리뷰 수", kind: "number", format: formatNumber },
+  { key: "rating", label: "평점", kind: "number", format: (v) => v.toFixed(2) },
+  { key: "categoryRank", label: "카테고리 순위", kind: "number", format: (v) => `${formatNumber(v)}위` },
+  { key: "views28d", label: "28일 조회수", kind: "number", format: formatNumber },
+  { key: "conversionRate", label: "전환율", kind: "number", format: (v) => formatPercent(v, 2) },
+  { key: "salesActual", label: "실제 판매량", kind: "period", format: formatNumber },
+  { key: "salesEstimated", label: "추정 판매량", kind: "period", format: formatNumber },
+  { key: "revenueActual", label: "실제 매출", kind: "period", format: formatWon },
+  { key: "revenueEstimated", label: "추정 매출", kind: "period", format: formatWon },
+  { key: "deliveryType", label: "배송 유형", kind: "text", format: deliveryLabel },
+  { key: "sellerTypeObserved", label: "판매자 유형 (관측)", kind: "text", format: sellerLabel },
+  { key: "optionCount", label: "옵션 수", kind: "number", format: formatNumber },
+  { key: "productNameObserved", label: "관측 상품명", kind: "text", format: (v) => v },
+];
+
+export default async function ProductDetailPage({ params }: PageProps<"/products/[id]">) {
+  const { id } = await params;
+  const user = await getCurrentUser();
+  if (!user) {
+    return (
+      <>
+        <PageHeader title="상품 상세" />
+        <LoginRequired next={`/products/${id}`} configured={isSupabaseConfigured()} />
+      </>
+    );
+  }
+
+  if (!UUID.test(id)) notFound();
+  const [product, categories, keywords, watch] = await Promise.all([
+    getProductDetail(id),
+    listCategories(),
+    listKeywordOptions(),
+    getWatchlistForProduct(id),
+  ]);
+  // RLS: 다른 사용자의 상품은 조회되지 않으므로 존재하지 않는 것과 같다
+  if (!product) notFound();
+  const events = watch ? await listWatchlistEvents(watch.id) : [];
+  const today = kstToday();
+
+  return (
+    <>
+      <Link href="/products" className="text-muted-foreground inline-flex items-center gap-1 text-sm hover:underline">
+        <ArrowLeft className="size-4" />
+        상품 목록
+      </Link>
+
+      <PageHeader
+        title={product.productName}
+        description={`${product.brand ?? "브랜드 -"} · 쿠팡 상품 ID ${product.coupangProductId}`}
+        actions={
+          <>
+            <Badge variant={product.lifecycleStatus === "ACTIVE" ? "secondary" : "outline"}>{LIFECYCLE_LABELS[product.lifecycleStatus]}</Badge>
+            {watch && <WatchlistStatusBadge status={watch.status} />}
+            <Badge>LIVE</Badge>
+          </>
+        }
+      />
+
+      <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>기본 정보</CardTitle>
+            <CardDescription className="space-y-0.5">
+              <span className="block">
+                itemId {product.master.coupangItemId ?? "-"} · vendorItemId {product.master.coupangVendorItemId ?? "-"}
+              </span>
+              <span className="block">
+                카테고리 {product.category?.path ?? product.category?.name ?? "미지정"} · 등록 {formatShortDate(product.master.createdAt)} · 최근 관측{" "}
+                {formatShortDate(product.lastSeenAt)}
+              </span>
+              {product.master.productUrl && (
+                <a href={product.master.productUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 underline">
+                  쿠팡에서 보기 <ExternalLink className="size-3" />
+                </a>
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {/* 저장 후 React 가 폼을 이전 기본값으로 reset 하므로, 서버 값이 바뀌면 새로 그린다 */}
+            <ProductEditForm key={product.master.updatedAt} product={product} categories={categories} />
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>현재 지표</CardTitle>
+              <CardDescription>항목마다 가장 최근·신뢰도 높은 값 (제외된 스냅샷 제외). 판매량·매출은 집계 기간과 함께 표시합니다.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {METRICS.map((m) => (
+                  <div key={m.key} className="rounded-md border px-3 py-2">
+                    <dt className="text-muted-foreground text-xs">{m.label}</dt>
+                    <dd className="mt-1 font-semibold">
+                      <MetricValue metric={m} point={product.metrics[m.key]} />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>관심상품</CardTitle>
+              <CardDescription>상태 이력은 자동 기록됩니다. 메모는 관심상품 메모에 남기세요.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!watch || watch.status === "DROPPED" ? (
+                <WatchlistAddForm productId={product.id} keywords={keywords} restoring={watch?.status === "DROPPED"} />
+              ) : (
+                <div className="flex flex-wrap items-center gap-4">
+                  <WatchlistStatusForm item={watch} />
+                  <WatchlistReleaseButton item={watch} />
+                  {watch.keyword && <span className="text-muted-foreground text-xs">발견 키워드: {watch.keyword}</span>}
+                </div>
+              )}
+              {watch && <WatchlistMemoForm key={watch.memo ?? ""} watchlistId={watch.id} productId={product.id} memo={watch.memo} />}
+              {watch && <WatchlistEvents events={events} />}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>지표 직접 입력</CardTitle>
+          <CardDescription>쿠팡 화면이나 외부 도구에서 확인한 값을 입력합니다. 실제 판매량과 추정 판매량은 따로 입력합니다.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProductSnapshotForm productId={product.id} today={today} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>수집 이력</CardTitle>
+          <CardDescription>날짜·출처별 원본 기록 (최신 → 과거). 잘못된 값은 삭제하지 않고 제외합니다.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProductSnapshotHistory productId={product.id} snapshots={product.snapshots} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>키워드 검색 순위</CardTitle>
+          <CardDescription>이 상품이 어떤 키워드에서 언제 몇 위였는지. 상품 하나를 여러 키워드에 연결할 수 있습니다.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <RankForm productId={product.id} keywords={keywords} today={today} />
+          <RankHistory ranks={product.ranks} mode="product" />
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function MetricValue({ metric, point }: { metric: Metric; point: ProductMetrics[keyof ProductMetrics] }) {
+  if (metric.kind === "text") return <DataPointValue point={point as DataPoint<string> | null} format={metric.format} showDate />;
+  if (metric.kind === "period") {
+    const p = point as PeriodDataPoint | null;
+    return <DataPointValue point={p} format={(v) => withPeriod(metric.format(v), p?.periodDays)} showDate />;
+  }
+  return <DataPointValue point={point as DataPoint | null} format={metric.format} showDate />;
+}

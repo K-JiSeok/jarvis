@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Input, Label, NativeSelect } from "@/components/ui/input";
 import type { CategoryOption } from "@/types/keyword";
@@ -18,11 +18,29 @@ export function CategoryField({
   idPrefix: string;
 }) {
   const [value, setValue] = useState(defaultValue);
+  const [prevDefault, setPrevDefault] = useState(defaultValue);
+  const selectRef = useRef<HTMLSelectElement>(null);
+
+  // 저장 후 서버 값(defaultValue)이 바뀌면 선택도 맞춘다
+  if (defaultValue !== prevDefault) {
+    setPrevDefault(defaultValue);
+    setValue(defaultValue);
+  }
+
+  // 폼 액션이 끝나면 React 가 폼을 reset 한다 → 선택 상태도 기본값으로 되돌려 화면과 폼 값을 맞춘다
+  useEffect(() => {
+    const form = selectRef.current?.form;
+    if (!form) return;
+    const onReset = () => setValue(defaultValue);
+    form.addEventListener("reset", onReset);
+    return () => form.removeEventListener("reset", onReset);
+  }, [defaultValue]);
 
   return (
     <div className="space-y-1.5">
       <Label htmlFor={`${idPrefix}-category`}>카테고리</Label>
       <NativeSelect
+        ref={selectRef}
         id={`${idPrefix}-category`}
         name="category_id"
         value={value}

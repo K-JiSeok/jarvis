@@ -2,15 +2,14 @@
 
 import { useActionState } from "react";
 
-import { updateKeywordAction, type FormState } from "@/app/keywords/actions";
+import { updateKeywordAction } from "@/app/keywords/actions";
+import { FormMessage } from "@/components/common/form-message";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { INITIAL_FORM_STATE } from "@/lib/forms";
 import type { CategoryOption, KeywordSummary } from "@/types/keyword";
 
-import { CategoryField } from "./category-field";
-import { FormMessage } from "./form-message";
-
-const INITIAL: FormState = { ok: false, message: null };
+import { CategoryField } from "@/components/common/category-field";
 
 /** 추적 여부 · 카테고리 · 메모. 키워드 문자열 자체는 바꾸지 않는다 (중복 판정 키) */
 export function KeywordSettingsForm({
@@ -20,7 +19,7 @@ export function KeywordSettingsForm({
   keyword: KeywordSummary;
   categories: CategoryOption[];
 }) {
-  const [state, action, pending] = useActionState(updateKeywordAction.bind(null, keyword.id), INITIAL);
+  const [state, action, pending] = useActionState(updateKeywordAction.bind(null, keyword.id), INITIAL_FORM_STATE);
 
   return (
     <form action={action} className="space-y-4">

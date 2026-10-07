@@ -9,7 +9,7 @@ import type {
 } from "@/types/keyword";
 
 type CategoryRow = Pick<Tables<"categories">, "id" | "name" | "path">;
-type KeywordRow = Pick<Tables<"keywords">, "memo">;
+type KeywordRow = Pick<Tables<"keywords">, "memo" | "updated_at">;
 type SnapshotRow = Tables<"keyword_snapshots">;
 
 /** v_keyword_latest 의 지표 컬럼 이름 (값, _source, _confidence, _captured_on 이 한 묶음) */
@@ -55,6 +55,7 @@ export function toKeywordSummary(
     category: row.category_id ? (categories.get(row.category_id) ?? null) : null,
     isTracking: row.is_tracking ?? true,
     memo: keyword?.memo ?? null,
+    updatedAt: keyword?.updated_at ?? null,
     snapshotCount: row.snapshot_count ?? 0,
     latestCapturedOn: row.latest_captured_on,
     metrics,

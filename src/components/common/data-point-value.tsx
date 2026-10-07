@@ -7,14 +7,14 @@ import type { DataPoint } from "@/types/common";
  * DataPoint 값 + 출처·신뢰도 배지 (+ 선택: 수집일).
  * 값이 없으면 "-" 만 표시한다 (0 으로 채우지 않는다 — NULL = 모름).
  */
-export function DataPointValue({
+export function DataPointValue<T extends number | string = number>({
   point,
   format,
   showDate = false,
   className,
 }: {
-  point: DataPoint | null;
-  format: (value: number) => string;
+  point: DataPoint<T> | null;
+  format: (value: T) => string;
   showDate?: boolean;
   className?: string;
 }) {

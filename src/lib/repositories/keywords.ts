@@ -56,7 +56,7 @@ export async function getKeywordDetail(keywordId: string): Promise<KeywordDetail
   const supabase = await createClient();
   const [latest, keyword, snapshots, categories] = await Promise.all([
     supabase.from("v_keyword_latest").select("*").eq("keyword_id", keywordId).maybeSingle(),
-    supabase.from("keywords").select("memo").eq("id", keywordId).maybeSingle(),
+    supabase.from("keywords").select("memo, updated_at").eq("id", keywordId).maybeSingle(),
     supabase
       .from("keyword_snapshots")
       .select("*")
@@ -71,6 +71,18 @@ export async function getKeywordDetail(keywordId: string): Promise<KeywordDetail
   if (!latest.data || !keyword.data) return null;
 
   return toKeywordDetail(toKeywordSummary(latest.data as KeywordLatestRow, categories, keyword.data), snapshots.data);
+}
+
+/** 키워드 선택 목록 (상품 순위 입력·관심상품 발견 키워드). 추적 중인 것 먼저 */
+export async function listKeywordOptions(): Promise<{ id: string; keyword: string }[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("keywords")
+    .select("id, keyword")
+    .order("is_tracking", { ascending: false })
+    .order("keyword");
+  if (error) throw error;
+  return data;
 }
 
 /** 같은 normalized_keyword 의 기존 키워드 id (중복 안내용) */
@@ -190,6 +202,7 @@ export async function saveManualKeywordSnapshot(input: ManualKeywordSnapshot): P
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("upsert_keyword_snapshot", { p: payload });
   if (error) throw error;
+  assertOwnSnapshot(data, "키워드");
   return (data as { action: SnapshotAction }).action;
 }
 
@@ -209,7 +222,7 @@ export async function setKeywordSnapshotExcluded(
   if (!row) throw new Error("스냅샷을 찾을 수 없습니다.");
 
   const view = toKeywordSnapshotView(row);
-  const { error } = await supabase.rpc("upsert_keyword_snapshot", {
+  const { data, error } = await supabase.rpc("upsert_keyword_snapshot", {
     p: {
       keyword_id: row.keyword_id,
       captured_on: view.capturedOn,
@@ -221,6 +234,7 @@ export async function setKeywordSnapshotExcluded(
     },
   });
   if (error) throw error;
+  assertOwnSnapshot(data, "키워드");
 }
 
 // 이전 PHASE 에서 만든 조회 (설정 화면 등에서 사용 가능) ----------------------------
@@ -236,4 +250,14 @@ export async function listTrackedKeywords({ limit = 100 } = {}): Promise<Keyword
     .limit(limit);
   if (error) throw error;
   return data;
+}
+
+/**
+ * upsert_*_snapshot() 은 대상 행이 다른 사용자 것이라 RLS 로 보이지 않을 때 오류 대신
+ * 빈 행으로 SKIPPED 를 돌려준다 (ON CONFLICT DO NOTHING 이 FK 검사보다 먼저 걸림, 데이터는 바뀌지 않음).
+ * 앱에서는 이를 "찾을 수 없음" 오류로 처리한다. (DB 함수 수정은 별도 결정 사항)
+ */
+function assertOwnSnapshot(data: unknown, label: string): void {
+  const row = (data as { row?: { id?: unknown } | null } | null)?.row;
+  if (!row || row.id == null) throw new Error(`${label}을 찾을 수 없습니다 (본인 데이터가 아님).`);
 }

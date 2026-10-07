@@ -3,19 +3,18 @@
 import { useActionState } from "react";
 import { Plus } from "lucide-react";
 
-import { createKeywordAction, type FormState } from "@/app/keywords/actions";
+import { createKeywordAction } from "@/app/keywords/actions";
+import { FormMessage } from "@/components/common/form-message";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { INITIAL_FORM_STATE } from "@/lib/forms";
 import { KEYWORD_MAX_LENGTH } from "@/lib/keywords";
 import type { CategoryOption } from "@/types/keyword";
 
-import { CategoryField } from "./category-field";
-import { FormMessage } from "./form-message";
-
-const INITIAL: FormState = { ok: false, message: null };
+import { CategoryField } from "@/components/common/category-field";
 
 export function KeywordCreateForm({ categories }: { categories: CategoryOption[] }) {
-  const [state, action, pending] = useActionState(createKeywordAction, INITIAL);
+  const [state, action, pending] = useActionState(createKeywordAction, INITIAL_FORM_STATE);
 
   return (
     <form action={action} className="space-y-4">
