@@ -224,3 +224,35 @@ categories, keywords, keyword_snapshots, products, product_snapshots, keyword_pr
 남은 작업 (직접):
 1. Authentication → "Allow new users to sign up" 끄기, 본인 계정 1개 생성
 2. `.env.local` 작성: URL, publishable(anon) 키, secret(service role) 키
+
+---
+
+## 16. PHASE 2-3 — 로그인 · 실제 조회 (2026-10-07)
+
+### 환경 확인 (키 값은 출력하지 않음)
+| 항목 | 결과 |
+|---|---|
+| `.env.local` | URL ✅, publishable 키(`sb_publishable_`) ✅, secret 키(`sb_secret_`, 공백 없음) ✅ |
+| 가입 차단 | `/auth/v1/settings` → `disable_signup: true` ✅ |
+| anon 차단 | publishable 키만으로 REST 조회 → 401 / 42501 ✅ |
+| secret 키 | 서버 전용 키로 `scoring_versions` 조회 → `v1` ✅ |
+| 계정 | auth.users 1명, 이메일 인증 완료 |
+
+### 구현
+| 파일 | 내용 |
+|---|---|
+| `src/proxy.ts` | Next 16 Proxy. 매 요청마다 Supabase 세션 쿠키 갱신(`getClaims`) + 캐시 금지 헤더. 리다이렉트로 막지는 않음 (DEMO 화면은 비로그인 열람 가능, 실데이터는 RLS가 보호) |
+| `src/app/login/` | 이메일·비밀번호 로그인 (Server Function + `useActionState`). 회원가입 UI 없음. 로그인 후 이동 경로는 같은 사이트 안만 허용 (`//evil.com` 차단 확인) |
+| `src/lib/auth.ts` | `getCurrentUser()` — JWT 서명 검증된 claims 기준 |
+| `src/components/layout/auth-status.tsx` | 사이드바 하단: 로그인 링크 / 이메일 + 로그아웃 |
+| `src/components/settings/db-status-card.tsx` | 설정 화면 "DB 연결 상태": 연결 · 로그인 · 활성 점수 버전과 코드 가중치 일치 여부 · 내 데이터 행 수(RLS) |
+| `src/lib/repositories/scoring.ts`, `status.ts` | 위 카드가 쓰는 조회 (UI → repository → Supabase) |
+
+### 확인
+- tsc · lint · build 통과. 세션 쿠키를 읽기 때문에 모든 페이지가 정적(○)에서 동적(ƒ) 렌더링으로 바뀜 (개인용 앱이라 영향 없음)
+- 브라우저(로그아웃 상태): `/settings` → "연결 설정됨 · 로그인 필요", `/login` 정상 표시, 사이드바 "로그인" 링크, Dashboard는 DEMO 유지, 서버 오류 없음
+- **로그인 후 화면은 직접 확인 필요.** 실제 계정 비밀번호는 Claude가 입력하지 않는다. 로그인하면 설정 화면 카드에 "점수 버전 v1 · 코드와 일치", 내 데이터 0건이 보여야 정상
+
+### 아직 결정 안 된 항목 (12-2, 변경하지 않음)
+1. `net_margin_rate` 등 `numeric(7,4)` → `numeric(12,4)` 확대 여부
+2. 점수·예측·점수 버전 수정 방지 트리거 추가 여부

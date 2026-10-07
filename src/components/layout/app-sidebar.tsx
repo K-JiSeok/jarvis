@@ -1,3 +1,4 @@
+import { AuthStatus } from "./auth-status";
 import { NavLinks } from "./nav-links";
 import { Brand } from "./brand";
 
@@ -11,8 +12,9 @@ export function AppSidebar() {
       <div className="flex-1 overflow-y-auto px-3">
         <NavLinks />
       </div>
-      <div className="text-muted-foreground border-sidebar-border border-t px-5 py-3 text-xs">
-        V1 · 개인용
+      <div className="text-muted-foreground border-sidebar-border space-y-1 border-t px-5 py-3 text-xs">
+        <AuthStatus />
+        <div>V1 · 개인용</div>
       </div>
     </aside>
   );

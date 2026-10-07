@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { PageHeader } from "@/components/common/page-header";
 import { PhasePlaceholder } from "@/components/common/phase-placeholder";
+import { DbStatusCard } from "@/components/settings/db-status-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { findNavItem } from "@/config/navigation";
 import {
@@ -21,6 +22,8 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title={nav.label} description={nav.description} />
+
+      <DbStatusCard />
 
       <Card>
         <CardHeader>
