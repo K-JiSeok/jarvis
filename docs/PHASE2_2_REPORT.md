@@ -256,3 +256,40 @@ categories, keywords, keyword_snapshots, products, product_snapshots, keyword_pr
 ### 아직 결정 안 된 항목 (12-2, 변경하지 않음)
 1. `net_margin_rate` 등 `numeric(7,4)` → `numeric(12,4)` 확대 여부
 2. 점수·예측·점수 버전 수정 방지 트리거 추가 여부
+
+---
+
+## 17. PHASE 2-2 마무리 — GPT 결정 ①② 반영 (2026-10-07)
+
+### migration
+| 버전 | 내용 |
+|---|---|
+| `20261007015755_widen_margin_rate_columns` | 결정 ① A안: `sales_results.net_margin_rate`(생성 컬럼), `profit_calculations.net_margin_rate`, `predictions.net_margin_predicted` → `numeric(12,4)`. `v_prediction_vs_actual`을 내렸다가 같은 정의로 다시 생성하고 권한도 복구(anon 차단 유지) |
+| `20261007015802_immutability_triggers` | 결정 ② A안: 수정 방지 트리거 3개 (`prevent_scoring_version_mutation`, `prevent_opportunity_score_mutation`, `prevent_prediction_mutation`). DELETE는 허용 |
+
+### 수정 방지 규칙 (실제 구현)
+| 테이블 | 차단 | 허용 |
+|---|---|---|
+| scoring_versions | version, weights, thresholds, factor_definitions, released_at | is_active, retired_at, description |
+| opportunity_scores | `is_current` 외 전부 (점수·세부 점수·verdict·calculated_at·scoring_version·input_refs·reasons·product_id 등) | is_current, keyword_id → NULL (키워드 삭제 시 FK SET NULL) |
+| predictions | 모든 UPDATE | listing_id / opportunity_score_id / profit_calculation_id → NULL (참조 대상 삭제 시 FK SET NULL) |
+
+트리거는 역할과 무관하게 동작한다 (postgres·service_role도 차단). 오류는 `P0001 IMMUTABLE: …`.
+
+### GPT 지시와의 차이 (보고)
+1. **`scoring_versions.profit_formula_version` 컬럼은 존재하지 않는다.** 설계에 없는 컬럼이라 추가하지 않았다(구조 변경 금지). 수익성 계산식 버전은 `profit_calculations.formula_version`에 계산 행마다 기록되고, 그 계산 행 자체를 바꾸지 않는 방식으로 관리된다. 점수 버전에 수익성 계산식 버전을 묶어야 한다면 컬럼 추가를 별도로 결정해야 한다.
+2. **FK SET NULL 예외.** "점수·예측 UPDATE 금지"를 그대로 적용하면, 허용된 DELETE(키워드·판매 건·점수 삭제) 때 FK가 참조 컬럼을 NULL로 바꾸는 내부 UPDATE까지 막혀서 삭제가 실패한다. 그래서 참조 컬럼이 **NULL로 바뀌는 경우만** 허용했다. 다른 값으로 바꾸는 것은 차단된다 (M09, M12).
+
+### 발견된 문제
+- 0011의 `alter default privileges in schema public revoke execute on functions from public`은 **효과가 없다.** PostgreSQL에서 스키마 단위 기본 권한은 전역 기본 권한(PUBLIC EXECUTE)을 취소하지 못한다. 기존 함수는 0011에서 개별 REVOKE로 처리돼 있었고, 이번 새 함수 3개도 개별 REVOKE로 처리했다. **앞으로 함수를 추가할 때마다 `revoke execute … from public, anon`을 함께 써야 한다** (검증 S08이 감시함).
+- Security Advisor 새 경고 1건: `auth_leaked_password_protection` (Auth → 유출 비밀번호 차단 기능 꺼짐). DB가 아니라 Auth 계정 설정이라 변경하지 않았다. 플랜에 따라 사용 가능 여부가 다르다.
+
+### 검증
+| 항목 | 결과 |
+|---|---|
+| migration | 2개 적용 성공 (로컬 PGlite + 운영 DB) |
+| typecheck · lint · build | 통과 |
+| 기존 108개 | 영향 없음, 전부 통과 |
+| 새 항목 24개 | S22 컬럼 타입, S23 트리거 존재, M01 극단 손실(-1009.7576) 저장, M02 ±99,999,999.9999 경계값, M03~M09 점수 컬럼 UPDATE 차단, M10 is_current 허용, M11~M12 예측 UPDATE 차단, M13~M14 DELETE 허용, M15~M16 FK SET NULL 통과, M17 baseline 삭제는 FK가 차단, M18~M20 scoring 정의 UPDATE 차단(postgres도), M21 허용 컬럼 변경, M22 새 버전 INSERT |
+| 운영 DB 합계 | **132 / 132 통과**. 실행 후 테스트 흔적 없음 (사용자 1명 = 본인, 데이터 0행, 점수 버전 v1만) |
+| RLS | B01~B12, N01~N05 그대로 통과 |

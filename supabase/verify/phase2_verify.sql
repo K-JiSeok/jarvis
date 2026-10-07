@@ -196,6 +196,21 @@ begin
   perform pg_temp.jv_assert('S21 scoring v1 컬럼 매핑 9개',
     (select count(*) from public.scoring_versions, jsonb_each(factor_definitions) f
      where version = 'v1' and f.value ? 'column') = 9);
+
+  -- 결정 ①: 순이익률 컬럼 numeric(12,4)
+  select count(*) into v_n from information_schema.columns
+  where table_schema = 'public' and numeric_precision = 12 and numeric_scale = 4
+    and (table_name, column_name) in (('sales_results', 'net_margin_rate'),
+                                      ('profit_calculations', 'net_margin_rate'),
+                                      ('predictions', 'net_margin_predicted'));
+  perform pg_temp.jv_assert('S22 순이익률 컬럼 3개 numeric(12,4)', v_n = 3, format('%s', v_n));
+
+  -- 결정 ②: 수정 방지 트리거 3개
+  select count(*) into v_n from pg_trigger tg join pg_class c on c.oid = tg.tgrelid
+  where (c.relname, tg.tgname) in (('scoring_versions', 'prevent_scoring_version_mutation'),
+                                   ('opportunity_scores', 'prevent_opportunity_score_mutation'),
+                                   ('predictions', 'prevent_prediction_mutation'));
+  perform pg_temp.jv_assert('S23 수정 방지 트리거 3개', v_n = 3, format('%s', v_n));
 end;
 $$;
 
@@ -764,6 +779,122 @@ begin
   perform pg_temp.jv_pass('U01 updated_at 자동 갱신 (8개 테이블)');
 end;
 $$;
+
+-- M. 결정 ① 극단값 저장 / 결정 ② 수정 방지 · DELETE
+do $$
+declare
+  v_listing uuid := pg_temp.jv('listing');
+  v_r record;
+begin
+  -- 하루 매출 9,900원에 광고비 1,000만 원 → 순이익률 약 -1010 (numeric(7,4) 였다면 INSERT 실패)
+  insert into public.sales_results (listing_id, period_type, period_start, period_end, units_sold, gross_revenue,
+    ad_spend, cogs, logistics_cost, coupang_fees, other_costs, source_type, confidence)
+  values (v_listing, 'DAY', '2026-10-20', '2026-10-20', 1, 9900, 10000000, 3000, 2500, 1000, 0, 'MANUAL', 'B')
+  returning net_profit, net_margin_rate into v_r;
+  perform pg_temp.jv_assert('M01 극단 손실 실적 저장 (net_margin_rate ≈ -1010)',
+    v_r.net_profit = -9996600 and v_r.net_margin_rate = -1009.7576, row_to_json(v_r)::text);
+
+  insert into public.profit_calculations (scenario_id, product_id, formula_version, inputs_snapshot, net_margin_rate, is_current)
+  select id, product_id, 'profit-v1', '{}', -99999999.9999, false from public.profit_scenarios
+  where product_id = pg_temp.jv('p1') limit 1;
+  insert into public.predictions (product_id, model_version, target_period_start, target_period_end, net_margin_predicted)
+  values (pg_temp.jv('p1'), 'pred-v1-test', '2026-11-01', '2026-11-30', 99999999.9999);
+  perform pg_temp.jv_assert('M02 numeric(12,4) 경계값 저장 (±99,999,999.9999)', true);
+end;
+$$;
+
+select pg_temp.jv_expect_error('M03 opportunity_scores total_score UPDATE 차단',
+  format($q$update public.opportunity_scores set total_score = 99 where id = '%s'$q$, pg_temp.jv('score_v1')), 'P0001');
+select pg_temp.jv_expect_error('M04 opportunity_scores 세부 점수 UPDATE 차단',
+  format($q$update public.opportunity_scores set margin_score = 10 where id = '%s'$q$, pg_temp.jv('score_v1')), 'P0001');
+select pg_temp.jv_expect_error('M05 opportunity_scores verdict UPDATE 차단',
+  format($q$update public.opportunity_scores set verdict = 'EXCLUDE' where id = '%s'$q$, pg_temp.jv('score_v1')), 'P0001');
+select pg_temp.jv_expect_error('M06 opportunity_scores calculated_at UPDATE 차단',
+  format($q$update public.opportunity_scores set calculated_at = now() - interval '1 day' where id = '%s'$q$, pg_temp.jv('score_v1')), 'P0001');
+select pg_temp.jv_expect_error('M07 opportunity_scores scoring_version UPDATE 차단',
+  format($q$update public.opportunity_scores set scoring_version = 'v2-test' where id = '%s'$q$, pg_temp.jv('score_v1')), 'P0001');
+select pg_temp.jv_expect_error('M08 opportunity_scores input_refs UPDATE 차단',
+  format($q$update public.opportunity_scores set input_refs = '{}' where id = '%s'$q$, pg_temp.jv('score_v1')), 'P0001');
+select pg_temp.jv_expect_error('M09 opportunity_scores keyword_id 다른 값으로 UPDATE 차단',
+  format($q$update public.opportunity_scores set keyword_id = '%s' where id = '%s'$q$, pg_temp.jv('kw'), pg_temp.jv('score_v1')), 'P0001');
+
+do $$
+declare
+  v_n integer;
+begin
+  update public.opportunity_scores set is_current = false where id = pg_temp.jv('score_v1');
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('M10 opportunity_scores is_current UPDATE 허용', v_n = 1);
+end;
+$$;
+
+select pg_temp.jv_expect_error('M11 predictions UPDATE 차단',
+  $q$update public.predictions set sales_predicted = 999 where model_version = 'pred-v1-test'$q$, 'P0001');
+select pg_temp.jv_expect_error('M12 predictions 참조 컬럼을 다른 값으로 UPDATE 차단',
+  format($q$update public.predictions set opportunity_score_id = null, listing_id = '%s' where listing_id is null and model_version = 'pred-v1-test'$q$,
+    pg_temp.jv('listing')),
+  'P0001');
+
+-- DELETE: 참조 없는 행은 삭제 가능, 참조되는 baseline 은 FK 가 막음, 참조 대상 삭제 시 SET NULL 은 통과
+do $$
+declare
+  v_kw2 uuid;
+  v_score uuid;
+  v_n integer;
+begin
+  delete from public.predictions where model_version = 'pred-v1-test' and target_period_start = '2026-11-01';
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('M13 prediction DELETE 허용', v_n = 1);
+
+  delete from public.opportunity_scores where product_id = pg_temp.jv('p1') and scoring_version = 'v2-test';
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('M14 참조 없는 opportunity_score DELETE 허용', v_n = 1);
+
+  -- 키워드 삭제 → 점수 keyword_id SET NULL 은 트리거를 통과
+  insert into public.keywords (keyword, normalized_keyword) values ('[TEST] 삭제용', '[test] 삭제용') returning id into v_kw2;
+  insert into public.opportunity_scores (product_id, keyword_id, scoring_version, total_score, verdict, input_refs, is_current)
+  values (pg_temp.jv('p1'), v_kw2, 'v1', 40, 'EXCLUDE', '{}', false) returning id into v_score;
+  delete from public.keywords where id = v_kw2;
+  perform pg_temp.jv_assert('M15 키워드 삭제 시 점수 keyword_id SET NULL 허용',
+    (select keyword_id is null from public.opportunity_scores where id = v_score));
+
+  -- 판매 건 삭제 → 예측 listing_id SET NULL 은 트리거를 통과
+  delete from public.my_listings where id = pg_temp.jv('listing');
+  perform pg_temp.jv_assert('M16 판매 건 삭제 시 예측 listing_id SET NULL 허용',
+    (select count(*) from public.predictions where model_version = 'pred-v1-test' and listing_id is null) >= 1);
+end;
+$$;
+
+select pg_temp.jv_expect_error('M17 baseline 점수는 여전히 DELETE 불가 (FK)',
+  format($q$with l as (insert into public.my_listings (reference_product_id, listing_name, baseline_score_id) values ('%s', '[TEST] 기준 보존', '%s') returning baseline_score_id)
+            delete from public.opportunity_scores where id = (select baseline_score_id from l)$q$,
+    pg_temp.jv('p1'), pg_temp.jv('score_v1')),
+  '23503');
+
+-- scoring_versions 는 postgres(마이그레이션 권한)로도 정의를 못 바꾼다
+reset role;
+select pg_temp.jv_expect_error('M18 scoring_versions weights UPDATE 차단',
+  $q$update public.scoring_versions set weights = jsonb_set(weights, '{margin}', '16') where version = 'v1'$q$, 'P0001');
+select pg_temp.jv_expect_error('M19 scoring_versions thresholds UPDATE 차단',
+  $q$update public.scoring_versions set thresholds = '{"strongBuy": 70, "review": 50}' where version = 'v1'$q$, 'P0001');
+select pg_temp.jv_expect_error('M20 scoring_versions factor_definitions UPDATE 차단',
+  $q$update public.scoring_versions set factor_definitions = '{}' where version = 'v1'$q$, 'P0001');
+do $$
+declare
+  v_n integer;
+begin
+  update public.scoring_versions set description = description || ' ', retired_at = null where version = 'v1';
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('M21 scoring_versions description / retired_at 변경은 허용', v_n = 1);
+
+  insert into public.scoring_versions (version, weights, thresholds, description, is_active)
+  values ('v3-test', '{"demand": 100}', '{"strongBuy": 80, "review": 60}', '[TEST]', false);
+  perform pg_temp.jv_assert('M22 새 scoring version INSERT 가능',
+    (select count(*) from public.scoring_versions where version in ('v1', 'v2-test', 'v3-test')) = 3
+    and (select weights from public.scoring_versions where version = 'v1') ->> 'margin' = '15');
+end;
+$$;
+set local role authenticated;
 
 -- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
