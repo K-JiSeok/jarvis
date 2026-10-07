@@ -66,7 +66,7 @@ npm run db:types         # 운영 DB 기준 공식 타입 (npx supabase login �
 | 2 | Supabase DB 설계 및 연결 | ✅ (운영 DB 적용·검증, 로그인) |
 | 3 | 키워드 데이터 구조 | ✅ (/keywords LIVE) |
 | 4 | 상품 데이터 구조 | ✅ (/products · 순위 · /watchlist LIVE) |
-| 5 | 경쟁상품 데이터 구조 | |
+| 5 | 경쟁상품 데이터 구조 | ✅ (/competitors · 상품 상세 후보·비교) |
 | 6 | 수익성 계산 | |
 | 7 | 기회점수 계산 엔진 | |
 | 8 | Dashboard | |

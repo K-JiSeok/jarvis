@@ -76,16 +76,21 @@ export function toSellerType(value: string | null | undefined): SellerType | nul
   return (SELLER_TYPES as readonly string[]).includes(value ?? "") ? (value as SellerType) : null;
 }
 
+/** v_product_latest 한 행 → 현재 지표 (상품 화면 · 경쟁상품 비교 공용) */
+export function toProductMetrics(row: ProductLatestRow): ProductMetrics {
+  return {
+    ...mapEntries(NUMBER_METRICS, (c) => toDataPoint<number>(row, c as Column)),
+    ...mapEntries(TEXT_METRICS, (c) => toDataPoint<string>(row, c as Column)),
+    ...mapEntries(PERIOD_METRICS, (c) => toPeriodPoint(row, c as (typeof PERIOD_METRICS)[keyof typeof PERIOD_METRICS])),
+  };
+}
+
 export function toProductSummary(
   row: ProductLatestRow,
   categories: Map<string, CategoryOption>,
   topKeywordRank: KeywordRankView | null,
 ): ProductSummary {
-  const metrics: ProductMetrics = {
-    ...mapEntries(NUMBER_METRICS, (c) => toDataPoint<number>(row, c as Column)),
-    ...mapEntries(TEXT_METRICS, (c) => toDataPoint<string>(row, c as Column)),
-    ...mapEntries(PERIOD_METRICS, (c) => toPeriodPoint(row, c as (typeof PERIOD_METRICS)[keyof typeof PERIOD_METRICS])),
-  };
+  const metrics = toProductMetrics(row);
 
   return {
     id: row.product_id!,

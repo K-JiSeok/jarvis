@@ -4,6 +4,10 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 
 import { DataPointValue } from "@/components/common/data-point-value";
+import { CandidateList } from "@/components/competitors/candidate-list";
+import { CompetitorAddForm } from "@/components/competitors/competitor-add-form";
+import { RelationBadge } from "@/components/competitors/competitor-controls";
+import { CompetitorsTable } from "@/components/competitors/competitors-table";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { deliveryLabel, sellerLabel, withPeriod } from "@/components/products/labels";
@@ -23,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUser } from "@/lib/auth";
 import { formatNumber, formatPercent, formatShortDate, formatWon } from "@/lib/format";
+import { getCompetitorCandidates, getCompetitorReferences, getCompetitorsForProduct } from "@/lib/repositories/competitors";
 import { listCategories, listKeywordOptions } from "@/lib/repositories/keywords";
 import { getProductDetail, kstToday } from "@/lib/repositories/products";
 import { getWatchlistForProduct, listWatchlistEvents } from "@/lib/repositories/watchlist";
@@ -71,11 +76,14 @@ export default async function ProductDetailPage({ params }: PageProps<"/products
   }
 
   if (!UUID.test(id)) notFound();
-  const [product, categories, keywords, watch] = await Promise.all([
+  const [product, categories, keywords, watch, competitors, candidates, references] = await Promise.all([
     getProductDetail(id),
     listCategories(),
     listKeywordOptions(),
     getWatchlistForProduct(id),
+    getCompetitorsForProduct(id),
+    getCompetitorCandidates(id),
+    getCompetitorReferences(id),
   ]);
   // RLS: 다른 사용자의 상품은 조회되지 않으므로 존재하지 않는 것과 같다
   if (!product) notFound();
@@ -167,6 +175,46 @@ export default async function ProductDetailPage({ params }: PageProps<"/products
           </Card>
         </div>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>경쟁상품</CardTitle>
+          <CardDescription>
+            이 상품을 기준으로 본 경쟁상품 (한 방향). 경쟁상품도 일반 상품이라 지표는 그 상품 상세에서 입력합니다. 해제해도 등록 이력은 남습니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <CompetitorsTable
+            mode="product"
+            relations={competitors}
+            base={{ name: product.productName, metrics: product.metrics, latestCapturedOn: product.latestCapturedOn }}
+          />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">경쟁상품 후보 (키워드 검색 순위)</h3>
+            <CandidateList productId={product.id} groups={candidates} />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">URL · 상품 ID 로 직접 등록</h3>
+            <CompetitorAddForm productId={product.id} keywords={keywords} />
+          </div>
+          {references.length > 0 && (
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-semibold">이 상품을 경쟁상품으로 둔 상품</h3>
+              <ul className="space-y-1 text-sm">
+                {references.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center gap-2">
+                    <Link href={`/products/${r.base.id}`} className="hover:underline">
+                      {r.base.productName}
+                    </Link>
+                    <RelationBadge type={r.relationType} />
+                    {r.keyword && <span className="text-muted-foreground text-xs">{r.keyword}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

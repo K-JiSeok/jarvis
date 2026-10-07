@@ -896,6 +896,44 @@ end;
 $$;
 set local role authenticated;
 
+-- CP. 경쟁상품 관계 (PHASE 5): 한 방향, 중복 금지, 해제 = is_active false
+do $$
+declare
+  v_p3 uuid := (select id from public.products where coupang_product_id = 'TEST-900003');
+  v_rel uuid;
+  v_n integer;
+begin
+  select id into v_rel from public.competitors where product_id = pg_temp.jv('p1') and competitor_product_id = v_p3;
+  perform pg_temp.jv_set('cp_rel', v_rel::text);
+  perform pg_temp.jv_set('p3', v_p3::text);
+  perform pg_temp.jv_assert('CP01 경쟁 관계 = 기준 → 경쟁 한 방향 (역방향 자동 생성 없음)',
+    v_rel is not null and not exists (select 1 from public.competitors where product_id = v_p3 and competitor_product_id = pg_temp.jv('p1')));
+
+  update public.competitors set is_active = false where id = v_rel;
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('CP02 해제 = is_active false (행 보존)',
+    v_n = 1 and (select not is_active from public.competitors where id = v_rel)
+    and (select count(*) from public.competitors where product_id = pg_temp.jv('p1') and competitor_product_id = v_p3) = 1);
+
+  update public.competitors set is_active = true, relation_type = 'SAME_PRODUCT' where id = v_rel;
+  perform pg_temp.jv_assert('CP03 다시 등록 = 같은 행 활성화 (중복 행 없음)',
+    (select is_active and relation_type = 'SAME_PRODUCT' from public.competitors where id = v_rel)
+    and (select count(*) from public.competitors where product_id = pg_temp.jv('p1')) = 1);
+
+  insert into public.competitors (product_id, competitor_product_id, relation_type, source_type)
+  values (v_p3, pg_temp.jv('p1'), 'SIMILAR', 'MANUAL');
+  perform pg_temp.jv_assert('CP04 역방향 관계는 별개 행으로만 (사용자가 직접 등록할 때)',
+    (select count(*) from public.competitors where (product_id, competitor_product_id) in ((pg_temp.jv('p1'), v_p3), (v_p3, pg_temp.jv('p1')))) = 2);
+end;
+$$;
+
+select pg_temp.jv_expect_error('CP05 같은 (기준, 경쟁) 쌍 중복 등록 차단',
+  format($q$insert into public.competitors (product_id, competitor_product_id, relation_type, source_type) values ('%s', '%s', 'SIMILAR', 'MANUAL')$q$,
+    pg_temp.jv('p1'), pg_temp.jv('p3')),
+  '23505');
+select pg_temp.jv_expect_error('CP06 정의되지 않은 관계 유형 차단',
+  format($q$update public.competitors set relation_type = 'RIVAL' where id = '%s'$q$, pg_temp.jv('cp_rel')), '23514');
+
 -- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
@@ -950,6 +988,18 @@ select pg_temp.jv_expect_error('B09 복합 FK: B 의 관심상품이 A 의 상�
   format($q$insert into public.watchlist (product_id) values ('%s')$q$, pg_temp.jv('p1')), '23503');
 select pg_temp.jv_expect_error('B10 B 는 A 의 import 를 롤백할 수 없음 (not found)',
   format($q$select public.rollback_import('%s')$q$, pg_temp.jv('dup_job')), 'P0002');
+select pg_temp.jv_expect_error('CP07 B 는 A 의 상품끼리 경쟁 관계 생성 불가 (복합 FK)',
+  format($q$insert into public.competitors (product_id, competitor_product_id, relation_type, source_type) values ('%s', '%s', 'SIMILAR', 'MANUAL')$q$,
+    pg_temp.jv('p1'), (select id from public.products where coupang_product_id = 'TEST-B-1')),
+  '23503');
+do $$
+declare v_n integer;
+begin
+  update public.competitors set is_active = false where id = pg_temp.jv('cp_rel');
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('CP08 B 는 A 의 경쟁 관계 해제 불가 (0행)', v_n = 0);
+end;
+$$;
 select pg_temp.jv_expect_error('B11 scoring_versions 쓰기 차단',
   $q$update public.scoring_versions set weights = '{}'$q$, '42501');
 
