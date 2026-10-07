@@ -935,6 +935,57 @@ select pg_temp.jv_expect_error('CP06 정의되지 않은 관계 유형 차단',
   format($q$update public.competitors set relation_type = 'RIVAL' where id = '%s'$q$, pg_temp.jv('cp_rel')), '23514');
 
 -- ===========================================================================
+-- PF. 수익성 시나리오 · 계산 결과 (PHASE 6)
+-- ===========================================================================
+do $$
+declare
+  v_scn uuid;
+  v_c1 uuid;
+begin
+  perform pg_temp.jv_assert('PF01 profit_calculations.break_even_price bigint',
+    (select data_type from information_schema.columns
+     where table_schema = 'public' and table_name = 'profit_calculations' and column_name = 'break_even_price') = 'bigint');
+
+  insert into public.profit_scenarios (product_id, name, sale_price, unit_cost_amount, coupang_fee_rate)
+  values (pg_temp.jv('p3'), '[TEST] PF', 29900, 8000, 0.108) returning id into v_scn;
+  perform pg_temp.jv_set('pf_scn', v_scn::text);
+  insert into public.profit_calculations (scenario_id, product_id, formula_version, inputs_snapshot, net_profit_per_unit, break_even_price)
+  values (v_scn, pg_temp.jv('p3'), 'profit-v1', '{"applied_fee_rate": 0.108}', 18000, 9000) returning id into v_c1;
+  -- 재계산: 이전 결과를 내리고 새 행을 현재로
+  update public.profit_calculations set is_current = false where id = v_c1;
+  insert into public.profit_calculations (scenario_id, product_id, formula_version, inputs_snapshot, net_profit_per_unit, break_even_price)
+  values (v_scn, pg_temp.jv('p3'), 'profit-v1', '{"applied_fee_rate": 0.06}', 19500, 8500);
+  perform pg_temp.jv_assert('PF02 재계산 = 새 행 + 이전 행 is_current=false (이력 2행, 현재 1행)',
+    (select count(*) from public.profit_calculations where scenario_id = v_scn) = 2
+    and (select count(*) from public.profit_calculations where scenario_id = v_scn and is_current) = 1
+    and (select net_profit_per_unit from public.profit_calculations where scenario_id = v_scn and is_current) = 19500);
+  insert into public.profit_scenarios (product_id, name, sale_price) values (pg_temp.jv('p3'), '[TEST] PF 미입력', 19900);
+  perform pg_temp.jv_assert('PF03 미입력 = NULL 로 저장 (원가·수수료율·비용 0 으로 채우지 않음)',
+    (select unit_cost_amount is null and coupang_fee_rate is null and intl_shipping_per_unit is null and ad_cost_rate is null
+            and ad_cost_per_unit is null and exchange_rate = 1 and unit_cost_currency = 'KRW' and source_type = 'MANUAL'
+     from public.profit_scenarios where product_id = pg_temp.jv('p3') and name = '[TEST] PF 미입력'));
+end;
+$$;
+
+select pg_temp.jv_expect_error('PF04 같은 시나리오의 현재 결과 2개 차단',
+  format($q$insert into public.profit_calculations (scenario_id, product_id, formula_version, inputs_snapshot) values ('%s', '%s', 'profit-v1', '{}')$q$,
+    pg_temp.jv('pf_scn'), pg_temp.jv('p3')),
+  '23505');
+select pg_temp.jv_expect_error('PF05 결과가 다른 상품의 시나리오를 참조 불가 (복합 FK)',
+  format($q$insert into public.profit_calculations (scenario_id, product_id, formula_version, inputs_snapshot, is_current) values ('%s', '%s', 'profit-v1', '{}', false)$q$,
+    pg_temp.jv('pf_scn'), pg_temp.jv('p1')),
+  '23503');
+select pg_temp.jv_expect_error('PF06 상품당 대표 시나리오 1개',
+  format($q$insert into public.profit_scenarios (product_id, is_primary) values ('%s', true)$q$, pg_temp.jv('p1')),
+  '23505');
+select pg_temp.jv_expect_error('PF07 수수료율 0~1 범위 밖 차단',
+  format($q$update public.profit_scenarios set coupang_fee_rate = 1.08 where id = '%s'$q$, pg_temp.jv('pf_scn')), '23514');
+select pg_temp.jv_expect_error('PF08 환율 0 차단',
+  format($q$update public.profit_scenarios set exchange_rate = 0 where id = '%s'$q$, pg_temp.jv('pf_scn')), '23514');
+select pg_temp.jv_expect_error('PF09 카테고리 수수료율 0~1 범위 밖 차단',
+  format($q$update public.categories set coupang_fee_rate = -0.1 where id = '%s'$q$, pg_temp.jv('cat')), '23514');
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -984,6 +1035,12 @@ select pg_temp.jv_expect_error('B07 UPDATE 로 owner_id 를 A 로 바꾸기 차�
 select pg_temp.jv_expect_error('B08 복합 FK: B 의 스냅샷이 A 의 상품을 참조 불가',
   format($q$select public.upsert_product_snapshot('{"product_id": "%s", "captured_at": "2026-10-10T10:00:00+09:00", "source_type": "EXTENSION", "confidence": "B", "price": 1}')$q$, pg_temp.jv('p1')),
   '23503');
+select pg_temp.jv_expect_error('B13 A 의 기존 상품 스냅샷 (날짜·출처) 대상 UPSERT → 권한 오류 (빈 SKIPPED 아님)',
+  format($q$select public.upsert_product_snapshot('{"product_id": "%s", "captured_on": "2026-10-07", "captured_at": "2026-10-07T23:00:00+09:00", "source_type": "EXTENSION", "confidence": "C", "price": 1, "is_excluded": true}')$q$, pg_temp.jv('p1')),
+  '42501');
+select pg_temp.jv_expect_error('B14 A 의 기존 키워드 스냅샷 대상 UPSERT → 권한 오류',
+  format($q$select public.upsert_keyword_snapshot('{"keyword_id": "%s", "captured_on": "2026-10-06", "captured_at": "2026-10-06T23:00:00+09:00", "source_type": "EXTENSION", "confidence": "C", "search_volume": 1}')$q$, pg_temp.jv('kw')),
+  '42501');
 select pg_temp.jv_expect_error('B09 복합 FK: B 의 관심상품이 A 의 상품을 참조 불가',
   format($q$insert into public.watchlist (product_id) values ('%s')$q$, pg_temp.jv('p1')), '23503');
 select pg_temp.jv_expect_error('B10 B 는 A 의 import 를 롤백할 수 없음 (not found)',
@@ -1003,6 +1060,28 @@ $$;
 select pg_temp.jv_expect_error('B11 scoring_versions 쓰기 차단',
   $q$update public.scoring_versions set weights = '{}'$q$, '42501');
 
+-- PF (B): A 의 수익성 데이터에 쓰기 불가
+select pg_temp.jv_expect_error('PF10 B 가 A 의 상품에 시나리오 추가 불가',
+  format($q$insert into public.profit_scenarios (product_id, name) values ('%s', 'x')$q$, pg_temp.jv('p3')),
+  '23503');
+select pg_temp.jv_expect_error('PF11 B 가 A 의 시나리오에 계산 결과 추가 불가',
+  format($q$insert into public.profit_calculations (scenario_id, product_id, formula_version, inputs_snapshot, is_current) values ('%s', '%s', 'profit-v1', '{}', false)$q$,
+    pg_temp.jv('pf_scn'), pg_temp.jv('p3')),
+  '23503');
+do $$
+declare
+  v_n bigint;
+begin
+  update public.profit_scenarios set sale_price = 1 where id = pg_temp.jv('pf_scn');
+  get diagnostics v_n = row_count;
+  update public.categories set coupang_fee_rate = 0.5 where id = pg_temp.jv('cat');
+  perform pg_temp.jv_assert('PF12 B 의 A 시나리오·카테고리 수수료율 UPDATE = 0행', v_n = 0 and (select count(*) from public.categories) = 0);
+  delete from public.profit_calculations;
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('PF13 B 의 profit_calculations DELETE = 0행', v_n = 0);
+end;
+$$;
+
 -- A 의 데이터가 그대로인지 (postgres 로 확인)
 reset role;
 do $$
@@ -1011,6 +1090,17 @@ begin
     (select count(*) from public.products where owner_id = pg_temp.jv('user_a') and product_name = 'hacked') = 0
     and (select count(*) from public.products where owner_id = pg_temp.jv('user_a')) >= 3
     and (select count(*) from public.watchlist where owner_id = pg_temp.jv('user_a')) = 2);
+  perform pg_temp.jv_assert('PF14 B 의 시도 후 A 수익성 데이터 보존',
+    (select sale_price = 29900 from public.profit_scenarios where id = pg_temp.jv('pf_scn'))
+    and (select count(*) from public.profit_calculations where scenario_id = pg_temp.jv('pf_scn')) = 2
+    and (select coupang_fee_rate is distinct from 0.5 from public.categories where id = pg_temp.jv('cat')));
+  perform pg_temp.jv_assert('B15 B 의 UPSERT 시도 후 A 스냅샷 그대로 (값·신뢰도·제외 여부)',
+    (select price = 28900 and confidence = 'B' and not is_excluded from public.product_snapshots
+     where product_id = pg_temp.jv('p1') and captured_on = '2026-10-07' and source_type = 'EXTENSION')
+    and (select search_volume = 12000 and confidence = 'B' from public.keyword_snapshots
+         where keyword_id = pg_temp.jv('kw') and captured_on = '2026-10-06' and source_type = 'EXTENSION')
+    and not exists (select 1 from public.product_snapshots where owner_id = pg_temp.jv('user_b'))
+    and not exists (select 1 from public.keyword_snapshots where owner_id = pg_temp.jv('user_b')));
 end;
 $$;
 

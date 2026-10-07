@@ -11,6 +11,7 @@ import { CompetitorsTable } from "@/components/competitors/competitors-table";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { deliveryLabel, sellerLabel, withPeriod } from "@/components/products/labels";
+import { ProfitWorkspace } from "@/components/profit/profit-workspace";
 import { ProductEditForm } from "@/components/products/product-edit-form";
 import { ProductSnapshotForm } from "@/components/products/product-snapshot-form";
 import { ProductSnapshotHistory } from "@/components/products/product-snapshot-history";
@@ -30,6 +31,7 @@ import { formatNumber, formatPercent, formatShortDate, formatWon } from "@/lib/f
 import { getCompetitorCandidates, getCompetitorReferences, getCompetitorsForProduct } from "@/lib/repositories/competitors";
 import { listCategories, listKeywordOptions } from "@/lib/repositories/keywords";
 import { getProductDetail, kstToday } from "@/lib/repositories/products";
+import { getProfitProductContext, listScenariosForProduct } from "@/lib/repositories/profit";
 import { getWatchlistForProduct, listWatchlistEvents } from "@/lib/repositories/watchlist";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import type { DataPoint } from "@/types/common";
@@ -63,8 +65,10 @@ const METRICS: Metric[] = [
   { key: "productNameObserved", label: "관측 상품명", kind: "text", format: (v) => v },
 ];
 
-export default async function ProductDetailPage({ params }: PageProps<"/products/[id]">) {
+export default async function ProductDetailPage({ params, searchParams }: PageProps<"/products/[id]">) {
   const { id } = await params;
+  const { scenario } = await searchParams;
+  const scenarioId = typeof scenario === "string" && UUID.test(scenario) ? scenario : null;
   const user = await getCurrentUser();
   if (!user) {
     return (
@@ -76,7 +80,7 @@ export default async function ProductDetailPage({ params }: PageProps<"/products
   }
 
   if (!UUID.test(id)) notFound();
-  const [product, categories, keywords, watch, competitors, candidates, references] = await Promise.all([
+  const [product, categories, keywords, watch, competitors, candidates, references, profitContext, scenarios] = await Promise.all([
     getProductDetail(id),
     listCategories(),
     listKeywordOptions(),
@@ -84,6 +88,8 @@ export default async function ProductDetailPage({ params }: PageProps<"/products
     getCompetitorsForProduct(id),
     getCompetitorCandidates(id),
     getCompetitorReferences(id),
+    getProfitProductContext(id),
+    listScenariosForProduct(id),
   ]);
   // RLS: 다른 사용자의 상품은 조회되지 않으므로 존재하지 않는 것과 같다
   if (!product) notFound();
@@ -175,6 +181,25 @@ export default async function ProductDetailPage({ params }: PageProps<"/products
           </Card>
         </div>
       </div>
+
+      {profitContext && (
+        <Card id="profit">
+          <CardHeader>
+            <CardTitle>수익성 분석</CardTitle>
+            <CardDescription>
+              판매가 기본값은 현재 판매가, 수수료율 기본값은 카테고리 수수료율입니다. 시나리오를 여러 개 저장해 비교할 수 있습니다 (결과: 자체 계산).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProfitWorkspace
+              product={profitContext}
+              scenarios={scenarios}
+              selectedId={scenarioId}
+              hrefFor={(sid) => `/products/${product.id}${sid ? `?scenario=${sid}` : ""}#profit`}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

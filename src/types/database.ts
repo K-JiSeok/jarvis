@@ -1130,6 +1130,8 @@ export type Database = {
       profit_calculations: {
         Row: {
           ad_cost_amount: number | null
+          break_even_price: number | null
+
           break_even_units: number | null
           calculated_at: string
           coupang_fee_amount: number | null
@@ -1149,6 +1151,8 @@ export type Database = {
         }
         Insert: {
           ad_cost_amount?: number | null
+          break_even_price?: number | null
+
           break_even_units?: number | null
           calculated_at?: string
           coupang_fee_amount?: number | null
@@ -1168,6 +1172,8 @@ export type Database = {
         }
         Update: {
           ad_cost_amount?: number | null
+          break_even_price?: number | null
+
           break_even_units?: number | null
           calculated_at?: string
           coupang_fee_amount?: number | null
