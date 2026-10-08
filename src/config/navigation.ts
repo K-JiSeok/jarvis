@@ -25,7 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
     href: "/",
     label: "Dashboard",
     icon: LayoutDashboard,
-    description: "오늘의 추천상품과 점수 근거",
+    description: "실제 데이터 현황 · 추천 상품 · 분석 상태",
     plannedPhase: 8,
   },
   {

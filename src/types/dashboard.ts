@@ -1,40 +1,37 @@
-import type {
-  DataMode,
-  DataPoint,
-  RiskWarning,
-  SalesFigures,
-  ScoreReason,
-} from "./common";
+import type { DataQuality, ScoreSummary } from "@/lib/dashboard/aggregate";
+
+import type { WatchlistItem } from "./watchlist";
+import type { SavedScoreView } from "./score";
 
 /**
- * Dashboard 추천상품 카드에 필요한 뷰 모델.
- * DB/수집 구조와 분리된 화면 전용 타입이다. (PHASE 8에서 실제 엔진 결과로 채운다)
+ * Dashboard (LIVE) 뷰 모델. 모든 값은 로그인 사용자의 실제 DB 데이터 (RLS).
+ * 점수가 없는 상품은 score = null ("미계산").
  */
-export interface RecommendationView {
-  rank: number;
+
+export interface DashboardProductRef {
+  id: string;
   productName: string;
-  category: string;
-  /** 기회 점수 0~100 */
-  opportunityScore: number;
-  sales: SalesFigures;
-  monthlyRevenue: DataPoint;
-  monthlyNetProfit: DataPoint;
-  /** 0~1 비율 */
-  marginRate: DataPoint;
-  /** 쿠팡 상품 수 / 월 검색량 */
-  competitionRatio: DataPoint;
-  /** 상위 상품 평균 리뷰 수 */
-  topReviewAvg: DataPoint;
-  /** 0~1 비율 */
-  wingRatio: DataPoint;
-  /** 0~1 비율, 전월 대비 */
-  growthRate: DataPoint;
-  reasons: ScoreReason[];
-  risks: RiskWarning[];
+  coupangProductId: string;
+  createdAt: string;
+  score: SavedScoreView | null;
 }
 
 export interface DashboardData {
-  mode: DataMode;
   generatedAt: string;
-  recommendations: RecommendationView[];
+  summary: ScoreSummary;
+  /** 등록 상품 수에서 뺀 삭제·판매 종료 상품 수 */
+  deletedProducts: number;
+  watchingCount: number;
+  recommendations: (SavedScoreView & { productName: string })[];
+  recentProducts: DashboardProductRef[];
+  recentScores: (SavedScoreView & { productName: string })[];
+  watching: (WatchlistItem & { score: SavedScoreView | null })[];
+  quality: DataQuality & { limit: number; truncated: boolean };
+  freshness: {
+    keyword: string | null;
+    product: string | null;
+    price: string | null;
+    rank: string | null;
+    score: string | null;
+  };
 }

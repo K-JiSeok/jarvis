@@ -11,6 +11,7 @@ import {
 } from "@/lib/scoring/engine";
 import { createClient } from "@/lib/supabase/server";
 import { isConfidence, isRiskType, isVerdict, type Json, type Tables, type TablesInsert } from "@/types/db";
+import type { ScoreReason } from "@/types/common";
 import type { ProductMetrics, ProductSnapshotView } from "@/types/product";
 import type { SavedScoreView, ScoreKeywordOption, ProductRiskView } from "@/types/score";
 
@@ -250,6 +251,14 @@ export async function recalculateScore(productId: string, keywordId: string | nu
   return { saved: true, scoreId: data.id, result };
 }
 
+function toReasons(value: Json): ScoreReason[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((r) => {
+    const o = r as { kind?: unknown; message?: unknown } | null;
+    return o && (o.kind === "POSITIVE" || o.kind === "CAUTION") && typeof o.message === "string" ? [{ kind: o.kind, message: o.message }] : [];
+  });
+}
+
 function toSavedScore(row: ScoreRow): SavedScoreView {
   const refs = (row.input_refs ?? {}) as { keyword?: string | null; engine?: string; factors?: Record<string, { basis?: string; inputs?: unknown[] }> };
   return {
@@ -264,6 +273,7 @@ function toSavedScore(row: ScoreRow): SavedScoreView {
     dataConfidence: isConfidence(row.data_confidence) ? row.data_confidence : null,
     factorScores: Object.fromEntries(SCORE_FACTORS.map((k) => [k, row[FACTOR_COLUMN[k]] as number | null])) as Record<ScoreFactor, number | null>,
     factorBasis: Object.fromEntries(SCORE_FACTORS.map((k) => [k, refs.factors?.[k]?.basis ?? null])) as Record<ScoreFactor, string | null>,
+    reasons: toReasons(row.reasons),
     calculatedAt: row.calculated_at,
     source: "CALCULATED",
   };

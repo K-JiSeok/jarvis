@@ -1,6 +1,6 @@
 import type { ScoreFactor } from "@/config/scoring-weights";
 
-import type { Confidence, RiskSeverity, RiskType, SourceType, Verdict } from "./common";
+import type { Confidence, RiskSeverity, RiskType, ScoreReason, SourceType, Verdict } from "./common";
 
 /** 저장된 Opportunity Score (opportunity_scores 1행) */
 export interface SavedScoreView {
@@ -17,6 +17,8 @@ export interface SavedScoreView {
   /** 요소 점수 0~100 */
   factorScores: Record<ScoreFactor, number | null>;
   factorBasis: Record<ScoreFactor, string | null>;
+  /** 저장 당시 엔진이 남긴 근거 (opportunity_scores.reasons) */
+  reasons: ScoreReason[];
   calculatedAt: string;
   /** 점수 자체는 항상 자체 계산 */
   source: Extract<SourceType, "CALCULATED">;

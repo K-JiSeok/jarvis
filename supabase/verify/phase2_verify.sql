@@ -1068,6 +1068,38 @@ end;
 $$;
 
 -- ===========================================================================
+-- DS. Dashboard 집계 기준 (PHASE 8)
+-- ===========================================================================
+do $$
+declare
+  v_n bigint;
+  v_ds uuid;
+begin
+  -- 상품별 현재 점수 1개 (가장 최근 계산) — 이력 행은 세지 않는다
+  select count(*) into v_n from (
+    select distinct on (product_id) product_id from public.v_current_scores order by product_id, calculated_at desc) t;
+  perform pg_temp.jv_assert('DS01 현재 점수 상품 수 = 상품별 1개 (이력·키워드 맥락 중복 없음)',
+    v_n = (select count(distinct product_id) from public.opportunity_scores where is_current)
+    and v_n < (select count(*) from public.opportunity_scores),
+    format('상품 %s / 전체 행 %s', v_n, (select count(*) from public.opportunity_scores)));
+  perform pg_temp.jv_assert('DS02 v_current_scores 에 is_current = false 행 없음',
+    not exists (select 1 from public.v_current_scores where not is_current));
+  -- 관심상품: WATCHING 집계는 DROPPED 로 바뀐 행을 빼야 한다
+  select count(*) into v_n from public.watchlist where status = 'WATCHING';
+  insert into public.products (coupang_product_id, product_name) values ('9100000099', '[TEST] DS 관심상품') returning id into v_ds;
+  insert into public.watchlist (product_id) values (v_ds);
+  perform pg_temp.jv_assert('DS03a 새 관심상품 = WATCHING 집계 +1',
+    (select count(*) from public.watchlist where status = 'WATCHING') = v_n + 1);
+  update public.watchlist set status = 'DROPPED' where product_id = v_ds;
+  perform pg_temp.jv_assert('DS03b DROPPED 로 바꾸면 WATCHING 집계에서 빠짐 (행은 보존)',
+    (select count(*) from public.watchlist where status = 'WATCHING') = v_n
+    and exists (select 1 from public.watchlist where product_id = v_ds and status = 'DROPPED'));
+  perform pg_temp.jv_assert('DS04 최신 수집일은 제외 처리 스냅샷을 빼고 계산 가능',
+    (select max(captured_on) from public.product_snapshots where not is_excluded) is not null);
+end;
+$$;
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1179,6 +1211,19 @@ begin
 end;
 $$;
 
+-- DS (B): Dashboard 조회 대상 0건
+do $$
+begin
+  perform pg_temp.jv_assert('DS05 B 의 Dashboard 조회에 A 의 행 0건 (상품·현재 점수·관심상품·스냅샷·순위)',
+    (select count(*) from public.products where owner_id <> pg_temp.jv('user_b')) = 0
+    and (select count(*) from public.v_current_scores where owner_id <> pg_temp.jv('user_b')) = 0
+    and (select count(*) from public.watchlist where owner_id <> pg_temp.jv('user_b')) = 0
+    and (select count(*) from public.product_snapshots where owner_id <> pg_temp.jv('user_b')) = 0
+    and (select count(*) from public.keyword_snapshots where owner_id <> pg_temp.jv('user_b')) = 0
+    and (select count(*) from public.keyword_product_ranks where owner_id <> pg_temp.jv('user_b')) = 0);
+end;
+$$;
+
 -- A 의 데이터가 그대로인지 (postgres 로 확인)
 reset role;
 do $$
@@ -1186,7 +1231,8 @@ begin
   perform pg_temp.jv_assert('B12 B 의 시도 후 A 데이터 보존',
     (select count(*) from public.products where owner_id = pg_temp.jv('user_a') and product_name = 'hacked') = 0
     and (select count(*) from public.products where owner_id = pg_temp.jv('user_a')) >= 3
-    and (select count(*) from public.watchlist where owner_id = pg_temp.jv('user_a')) = 2);
+    -- 관심상품: W 섹션 2개 + DS03 의 DROPPED 1개
+    and (select count(*) from public.watchlist where owner_id = pg_temp.jv('user_a')) = 3);
   perform pg_temp.jv_assert('SC13 B 의 시도 후 A 점수 보존',
     (select count(*) from public.opportunity_scores where product_id = pg_temp.jv('p3') and is_current) = 2
     and not exists (select 1 from public.opportunity_scores where owner_id = pg_temp.jv('user_b')));
