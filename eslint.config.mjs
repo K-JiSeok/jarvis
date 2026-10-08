@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 확장 프로그램 빌드 결과 (npm run ext:build)
+    "extension/dist/**",
   ]),
 ]);
 

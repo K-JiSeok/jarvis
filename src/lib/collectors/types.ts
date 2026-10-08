@@ -33,6 +33,8 @@ export interface CollectedProduct extends CollectedBase {
   /** 쿠팡 상품 ID. 없으면 productUrl 의 /products/{id} 에서 찾는다 */
   coupangProductId?: string | null;
   productUrl?: string | null;
+  /** 페이지 안 다른 곳에 보인 상품 ID (교차 검증용). 하나라도 다르면 저장하지 않는다 */
+  observedProductIds?: string[] | null;
   productName?: string | null;
   price?: Observed;
   originalPrice?: Observed;
@@ -46,6 +48,8 @@ export interface CollectedProduct extends CollectedBase {
   categoryRank?: Observed;
   /** WING(판매자 센터) 화면에서 본 값 — source = WING_SESSION 일 때만 저장 */
   wing?: CollectedWingMetrics | null;
+  /** 화면에서 확인했지만 JARVIS 모델에 저장하지 않는 값 (import_rows.payload 에만 남는다) */
+  observedOnly?: Record<string, string | number | null> | null;
 }
 
 /** WING 화면에서만 볼 수 있는 값. 어떤 값이 실제로 보이는지는 확장 프로그램 단계에서 확인한다 */
@@ -69,6 +73,15 @@ export interface CollectedSearchItem {
   rank: Observed;
   /** 광고 표시가 있으면 true. 확인 못 하면 false 로 두지 말고 null — null 이면 자연 노출로 저장한다 */
   isAd?: boolean | null;
+  /** 이하 화면 참고값 — 순위 테이블에는 저장하지 않고 import_rows.payload 에만 남는다 */
+  /** 광고 포함 화면 전체 위치 (1부터) */
+  displayPosition?: number | null;
+  /** 칸에 보인 쿠팡 순위 배지 숫자 (자연 1~10위) — rank 와 다르면 저장하지 않는다 */
+  rankBadge?: number | null;
+  productName?: string | null;
+  priceText?: string | null;
+  reviewCountText?: string | null;
+  ratingText?: string | null;
 }
 
 /** 키워드 지표 (키워드 도구·WING 키워드 화면 등에서 본 값) */

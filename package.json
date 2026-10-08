@@ -14,7 +14,9 @@
     "test:score": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/scoring/test.mjs",
     "test:dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/dashboard/test.mjs",
     "test:import": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/import/test.mjs",
-    "test:ingest": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ingest/test.mjs"
+    "test:ingest": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ingest/test.mjs",
+    "ext:build": "node scripts/extension/build.mjs",
+    "test:extension": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/extension/test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -34,9 +36,11 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4",
+    "@types/chrome": "0.3.4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",

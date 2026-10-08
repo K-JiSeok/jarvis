@@ -70,6 +70,12 @@ export function normalizeProduct(c: CollectedProduct): { record: NormalizedProdu
   const base = checkBase(c, issues);
   const coupangProductId = productIdOf(c.coupangProductId, c.productUrl, issues);
   if (!base || !coupangProductId) return { record: null, issues };
+  // 페이지 안의 다른 상품 ID 표기와 다르면 어느 상품의 값인지 확정할 수 없다 → 저장하지 않는다
+  const others = [...new Set((c.observedProductIds ?? []).filter(Boolean))].filter((id) => id !== coupangProductId);
+  if (others.length > 0) {
+    issues.push({ field: "coupangProductId", message: `URL 의 상품 ID ${coupangProductId} 와 페이지의 상품 ID ${others.join(", ")} 가 다릅니다 (저장하지 않음)` });
+    return { record: null, issues };
+  }
 
   const metrics: Record<string, number | string> = {};
   const put = (key: string, value: Observed) => {
@@ -119,6 +125,12 @@ export function normalizeSearch(c: CollectedSearchResult): { records: Normalized
   if (!keyword) issues.push({ field: "keyword", message: "키워드가 없습니다" });
   if (!base || !keyword) return { records: [], issues };
   const page = c.page != null && Number.isInteger(c.page) && c.page >= 1 ? c.page : null;
+  // 화면 순위 배지(자연 1~10위)와 계산한 순위가 다르면 화면 구조가 바뀐 것 → 이 검색 결과는 저장하지 않는다
+  const badgeMismatch = c.items.find((item) => item.rankBadge != null && (item.isAd === true || item.rankBadge !== Number(item.rank)));
+  if (badgeMismatch) {
+    issues.push({ field: "rank", message: `쿠팡 순위 배지 ${badgeMismatch.rankBadge} 와 계산한 순위 ${badgeMismatch.rank} 가 다릅니다 (화면 구조 변경 가능성, 저장하지 않음)` });
+    return { records: [], issues };
+  }
 
   const records: NormalizedRank[] = [];
   c.items.forEach((item, i) => {

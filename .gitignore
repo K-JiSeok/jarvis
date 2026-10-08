@@ -21,3 +21,6 @@ next-env.d.ts
 # supabase cli (link 정보 등 로컬 전용)
 /supabase/.temp
 /supabase/.branches
+
+# JARVIS 확장 프로그램 빌드 결과 (npm run ext:build 로 다시 만든다)
+/extension/dist

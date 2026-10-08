@@ -1,0 +1,48 @@
+:root {
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #2563eb;
+  --ok: #047857;
+  --warn: #b45309;
+  --err: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111827;
+    --fg: #f9fafb;
+    --muted: #9ca3af;
+    --line: #374151;
+    --accent: #3b82f6;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; width: 320px; padding: 12px; font: 13px/1.45 -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; background: var(--bg); color: var(--fg); }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+header strong { font-size: 15px; letter-spacing: 0.04em; }
+h2 { font-size: 12px; margin: 14px 0 4px; color: var(--muted); font-weight: 600; }
+.pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.ok { color: var(--ok); border-color: currentColor; }
+.pill.err { color: var(--err); border-color: currentColor; }
+.row { display: flex; justify-content: space-between; padding: 3px 0; }
+.muted { color: var(--muted); }
+.error { color: var(--err); min-height: 1em; }
+.state[data-s="ready"] { color: var(--ok); }
+.state[data-s="busy"] { color: var(--warn); }
+.state[data-s="done"] { color: var(--ok); font-weight: 600; }
+.state[data-s="error"], .state[data-s="blocked"] { color: var(--err); }
+.summary { margin: 6px 0; padding-left: 16px; }
+.summary li { margin: 1px 0; word-break: keep-all; }
+input { width: 100%; margin: 3px 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; font: inherit; }
+button { width: 100%; margin-top: 6px; padding: 8px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.link { width: auto; margin: 0; padding: 0; background: none; color: var(--muted); font-weight: 400; text-decoration: underline; }
+footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+td { padding: 1px 0; }
+td:last-child { text-align: right; }
+a { color: var(--accent); }

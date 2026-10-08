@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "JARVIS 수집기",
+  "description": "지금 보고 있는 쿠팡 화면(상품 · 검색 결과 · WING)의 값을 JARVIS 로 보냅니다.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4hVvzMaM8xzNJ94Oxfh8APy29U/Fs5dMR6482PAGAsNzLCX9dyqCv7DCmVWo/E4GmbFT631CfK88B4itAssde5tes6Sv8jL/Sk1y8WI415JIW1M0DrKqeZ7GbSg1D5K1idJFsBj3jGVuV2be5hmlM8SR1KQBJbeoJD1UgVGI++rRnZYH8nf+Xt7Fc2jRHsF8EYeNXxwP7fhzQ6TmuOyHK9z3FC0b6C7dfoak7XJtyna+lE2gWTylfFbAPWUqWivC/ghnTiZRyYm553Qzz4xXOyzSijod4+hqqGydMzwUjs2RdBBxy+XT//p/UJaFPMdgRZi9i9YTVimCv4AidigSWwIDAQAB",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://www.coupang.com/*", "https://wing.coupang.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "JARVIS", "default_popup": "popup.html" },
+  "content_scripts": [
+    { "matches": ["https://www.coupang.com/vp/products/*"], "js": ["content-product.js"], "run_at": "document_idle" },
+    { "matches": ["https://www.coupang.com/np/search*"], "js": ["content-search.js"], "run_at": "document_idle" },
+    { "matches": ["https://wing.coupang.com/*"], "js": ["content-wing.js"], "run_at": "document_idle" }
+  ]
+}

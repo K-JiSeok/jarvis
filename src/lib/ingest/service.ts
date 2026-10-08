@@ -4,6 +4,8 @@ import { normalizeKeyword, normalizeProduct, normalizeSearch } from "@/lib/colle
 import type { CollectedKeyword, CollectedProduct, CollectedSearchResult, NormalizeIssue } from "@/lib/collectors/types";
 import type { NormalizedRecord } from "@/lib/import/core";
 import { ingestBatch, type BatchJob, type IngestOutcome } from "@/lib/repositories/ingest";
+import type { Database } from "@/types/database";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { normalizedToBatchRows, type BatchRow } from "./batch-rows";
 
@@ -52,7 +54,9 @@ export function collectedToRows(batch: CollectedBatch): { rows: BatchRow[]; reco
     allIssues.push(...r.issues);
     for (const rec of r.records) {
       records.push(rec);
-      payloads.push({ collected: { keyword: s.keyword, page: s.page ?? null, coupangProductId: rec.coupangProductId, rank: rec.rankPosition } });
+      // 화면 참고값(전체 위치 · 상품명 · 가격 등)은 순위 테이블에 없으므로 payload 에만 남긴다
+      const item = s.items.find((x) => Number(x.rank) === rec.rankPosition && (x.isAd === true) === rec.isAd);
+      payloads.push({ collected: { keyword: s.keyword, page: s.page ?? null, ...item, coupangProductId: rec.coupangProductId, rank: rec.rankPosition, isAd: rec.isAd } });
     }
     if (r.records.length === 0) rejected.push({ kind: "KEYWORD_PRODUCT_RANK", issues: r.issues, payload: { keyword: s.keyword, items: s.items.length } });
   }
@@ -82,7 +86,10 @@ export function collectedToRows(batch: CollectedBatch): { rows: BatchRow[]; reco
   return { rows, records, issues: allIssues, sources };
 }
 
-export async function ingestCollected(batch: CollectedBatch): Promise<IngestOutcome & { issues: NormalizeIssue[] }> {
+export async function ingestCollected(
+  batch: CollectedBatch,
+  options: { client?: SupabaseClient<Database>; channel?: BatchJob["channel"] } = {},
+): Promise<IngestOutcome & { issues: NormalizeIssue[] }> {
   const { rows, records, issues, sources } = collectedToRows(batch);
   if (rows.length === 0) throw new IngestInputError("저장할 레코드가 없습니다.");
   if (rows.length > MAX_INGEST_RECORDS) throw new IngestInputError(`한 배치는 최대 ${MAX_INGEST_RECORDS}건입니다 (${rows.length}건).`);
@@ -98,7 +105,7 @@ export async function ingestCollected(batch: CollectedBatch): Promise<IngestOutc
           : "SEARCH_RANKS";
   const outcome = await ingestBatch(
     {
-      channel: "EXTENSION",
+      channel: options.channel ?? "EXTENSION",
       import_type: importType,
       // 출처가 하나면 그 출처, 섞여 있으면 수집 경로(EXTENSION). 행마다의 출처는 각 스냅샷 source_type 에 남는다
       source_type: sources.size === 1 ? [...sources][0] : "EXTENSION",
@@ -107,6 +114,7 @@ export async function ingestCollected(batch: CollectedBatch): Promise<IngestOutc
       schema_version: "ingest-v1",
     },
     rows,
+    options.client,
   );
   return { ...outcome, issues };
 }

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>JARVIS</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <strong>JARVIS</strong>
+      <span id="conn" class="pill">확인 중</span>
+    </header>
+
+    <section id="login" hidden>
+      <p class="muted">JARVIS 계정으로 로그인하세요. 비밀번호는 저장하지 않습니다.</p>
+      <form id="login-form">
+        <input id="email" type="email" placeholder="이메일" autocomplete="username" required />
+        <input id="password" type="password" placeholder="비밀번호" autocomplete="current-password" required />
+        <button type="submit">로그인</button>
+      </form>
+      <p id="login-error" class="error"></p>
+    </section>
+
+    <section id="main" hidden>
+      <div class="row"><span class="muted">현재 페이지</span><strong id="page">-</strong></div>
+      <div class="row"><span class="muted">상태</span><span id="state" class="state">-</span></div>
+      <ul id="summary" class="summary"></ul>
+      <button id="collect" type="button" disabled>현재 페이지 수집</button>
+
+      <h2>마지막 수집</h2>
+      <div id="last" class="muted">아직 없습니다.</div>
+
+      <div id="notfound" hidden>
+        <h2>JARVIS 에 등록되지 않은 상품</h2>
+        <ul id="notfound-list" class="summary"></ul>
+        <button type="button" disabled title="다음 단계에서 결정합니다">선택 상품 등록 (다음 단계)</button>
+      </div>
+
+      <footer>
+        <span id="who" class="muted"></span>
+        <button id="logout" type="button" class="link">로그아웃</button>
+      </footer>
+    </section>
+    <script src="popup.js"></script>
+  </body>
+</html>

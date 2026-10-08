@@ -40,15 +40,15 @@ test("Adapter", "상품 페이지 → CollectedProduct (판매량·전환율 필
   assert.equal(c.discountRate, null);
   for (const k of ["salesActual", "salesEstimated", "conversionRate", "views28d", "adBid"]) assert.ok(!(k in c), k);
 });
-test("Adapter", "검색 페이지 → 키워드·페이지는 URL 에서, 순위는 보인 순서, 광고 표시 없으면 null", () => {
+test("Adapter", "검색 페이지 → 키워드·페이지는 URL 에서, 순위는 자연·광고 따로 센 순서 (PHASE 11 실제 화면 기준)", () => {
   assert.deepEqual(searchParamsOf(MOCK_SEARCH_PAGE.url), { keyword: "[TEST] 실리콘 트레이", page: 1 });
   const s = adaptSearchPage(MOCK_SEARCH_PAGE, MOCK_META);
   assert.equal(s.keyword, "[TEST] 실리콘 트레이");
-  assert.deepEqual(s.items.map((x) => [x.coupangProductId, x.rank, x.isAd]), [
-    ["9900000702", 1, true],
-    ["9900000701", 2, null],
-    ["9900000703", 3, null],
-    [null, 4, null],
+  assert.deepEqual(s.items.map((x) => [x.coupangProductId, x.rank, x.isAd, x.displayPosition]), [
+    ["9900000702", 1, true, 1],
+    ["9900000701", 1, false, 2],
+    ["9900000703", 2, false, 3],
+    [null, 3, false, 4],
   ]);
 });
 
@@ -104,12 +104,12 @@ test("Normalize", "잘못된 값은 그 필드만 버리고 issue (평점 7 · �
   assert.deepEqual(record.metrics, { price: 1000 });
   assert.deepEqual(issues.map((i) => i.field), ["review_count", "rating"]);
 });
-test("Normalize", "검색 결과 → 순위 레코드 (상품 ID 없는 항목은 issue · 광고 null = 자연)", () => {
+test("Normalize", "검색 결과 → 순위 레코드 (상품 ID 없는 항목은 issue · 광고 1위 / 자연 1·2위)", () => {
   const { records, issues } = normalizeSearch(adaptSearchPage(MOCK_SEARCH_PAGE, MOCK_META));
   assert.deepEqual(records.map((r) => [r.coupangProductId, r.rankPosition, r.isAd, r.page]), [
     ["9900000702", 1, true, 1],
-    ["9900000701", 2, false, 1],
-    ["9900000703", 3, false, 1],
+    ["9900000701", 1, false, 1],
+    ["9900000703", 2, false, 1],
   ]);
   assert.equal(issues.length, 1);
   assert.equal(records[0].keyword, "[TEST] 실리콘 트레이");

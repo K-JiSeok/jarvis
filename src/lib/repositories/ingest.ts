@@ -2,7 +2,9 @@ import "server-only";
 
 import type { BatchRow } from "@/lib/ingest/batch-rows";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
 import type { Json, Tables } from "@/types/db";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /*
  * 대량 저장 (ingest_batch RPC). 로그인 사용자 세션(RLS)으로만 호출한다 — service role 을 쓰지 않는다.
@@ -39,9 +41,12 @@ export class DuplicateBatchError extends Error {
   }
 }
 
-/** ingest_batch 1회 호출 (행 수 최대 5,000 — DB 함수 한도) */
-export async function ingestBatch(job: BatchJob, rows: BatchRow[]): Promise<IngestOutcome> {
-  const supabase = await createClient();
+/**
+ * ingest_batch 1회 호출 (행 수 최대 5,000 — DB 함수 한도).
+ * client 를 주지 않으면 쿠키의 로그인 세션. /api/ingest 는 Bearer 토큰으로 만든 사용자 클라이언트를 넘긴다 (둘 다 RLS).
+ */
+export async function ingestBatch(job: BatchJob, rows: BatchRow[], client?: SupabaseClient<Database>): Promise<IngestOutcome> {
+  const supabase = client ?? (await createClient());
   const started = performance.now();
   const { data, error } = await supabase.rpc("ingest_batch", { p_job: job as unknown as Json, p_rows: rows as unknown as Json });
   const elapsedMs = Math.round(performance.now() - started);
