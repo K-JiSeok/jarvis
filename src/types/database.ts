@@ -1851,8 +1851,10 @@ export type Database = {
     }
     Functions: {
       confidence_rank: { Args: { conf: string }; Returns: number }
+      ingest_batch: { Args: { p_job: Json; p_rows: Json }; Returns: Json }
       rollback_import: { Args: { p_job_id: string }; Returns: Json }
       source_priority: { Args: { src: string }; Returns: number }
+      upsert_keyword_product_rank: { Args: { p: Json }; Returns: Json }
       upsert_keyword_snapshot: { Args: { p: Json }; Returns: Json }
       upsert_product_snapshot: { Args: { p: Json }; Returns: Json }
     }

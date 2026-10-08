@@ -26,7 +26,9 @@ const RESULT: Record<string, { label: string; cls: string }> = {
 };
 
 const dateTime = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" });
-const typeLabel = (t: string) => IMPORT_TYPE_LABELS[t as ImportType] ?? t;
+const typeLabel = (t: string) => (t === "MIXED" ? "혼합" : (IMPORT_TYPE_LABELS[t as ImportType] ?? t));
+/** 파일명이 없는 수집 배치(확장 프로그램 등)는 수집 경로·도구 이름으로 표시 */
+const jobName = (j: JobSummary) => j.fileName ?? `수집 배치 · ${j.channel}${j.sourceTool ? ` (${j.sourceTool})` : ""}`;
 const sourceLabel = (s: string) => SOURCE_TYPE_LABELS[s as SourceType] ?? s;
 
 export function ImportHistory({ jobs, selectedId }: { jobs: JobSummary[]; selectedId: string | null }) {
@@ -52,7 +54,7 @@ export function ImportHistory({ jobs, selectedId }: { jobs: JobSummary[]; select
             <tr key={j.id} className={cn("border-b last:border-0", j.id === selectedId && "bg-muted/50")}>
               <td className="max-w-64 truncate py-2">
                 <Link href={`/import?job=${j.id}`} className="font-medium hover:underline">
-                  {j.fileName ?? "(이름 없음)"}
+                  {jobName(j)}
                 </Link>
               </td>
               <td className="py-2 text-xs">{typeLabel(j.importType)}</td>
@@ -80,7 +82,7 @@ export function ImportJobDetail({ job, rows }: { job: JobSummary; rows: ImportRo
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-        <strong>{job.fileName}</strong>
+        <strong>{jobName(job)}</strong>
         <Badge variant={STATUS[job.status]?.variant ?? "outline"}>{STATUS[job.status]?.label ?? job.status}</Badge>
         <span className="text-muted-foreground tabular-nums">
           {typeLabel(job.importType)} · {sourceLabel(job.sourceType)} · 신뢰도 {job.confidence ?? "-"} · 추가 {job.insertedRows} · 갱신 {job.updatedRows} · 건너뜀 {job.skippedRows} ·

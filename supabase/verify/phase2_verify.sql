@@ -1187,6 +1187,166 @@ end;
 $$;
 
 -- ===========================================================================
+-- BI. 대량 저장 ingest_batch / upsert_keyword_product_rank (PHASE 10)
+-- ===========================================================================
+do $$
+declare
+  v_rows jsonb;
+  v_res jsonb;
+  v_job uuid;
+  v_n bigint;
+  v_t0 timestamptz;
+begin
+  perform pg_temp.jv_assert('BI00 새 함수 2개 SECURITY INVOKER · anon 실행 불가',
+    (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname in ('ingest_batch', 'upsert_keyword_product_rank') and not p.prosecdef
+       and not has_function_privilege('anon', p.oid, 'EXECUTE') and has_function_privilege('authenticated', p.oid, 'EXECUTE')) = 2);
+
+  -- 상품 스냅샷 100건 (같은 상품, 날짜 100개)
+  select jsonb_agg(jsonb_build_object('row_number', i + 1, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID',
+    'record_key', 'bi-p-' || i,
+    'data', jsonb_build_object('product_id', pg_temp.jv('p3'), 'captured_on', (date '2025-01-01' + i)::text,
+      'captured_at', ((date '2025-01-01' + i)::text || 'T00:00:00+09:00'), 'source_type', 'EXTENSION', 'confidence', 'B',
+      'price', 10000 + i, 'review_count', i)))
+  into v_rows from generate_series(0, 99) i;
+  v_t0 := clock_timestamp();
+  v_res := public.ingest_batch('{"channel": "EXTENSION", "import_type": "PRODUCT_SNAPSHOTS", "source_type": "EXTENSION", "idempotency_key": "bi-batch-p"}', v_rows);
+  v_job := (v_res #>> '{job,id}')::uuid;
+  perform pg_temp.jv_set('bi_job_p', v_job::text);
+  perform pg_temp.jv_assert(format('BI01 상품 스냅샷 100건 한 번에 INSERTED (%s ms)', round(extract(epoch from clock_timestamp() - v_t0) * 1000)),
+    v_res #>> '{job,status}' = 'SUCCEEDED' and (v_res #>> '{job,inserted_rows}')::int = 100
+    and (select count(*) from public.import_rows where import_job_id = v_job and result = 'INSERTED' and target_table = 'product_snapshots') = 100
+    and (select count(*) from public.product_snapshots where product_id = pg_temp.jv('p3') and source_type = 'EXTENSION' and import_job_id = v_job) = 100,
+    v_res::text);
+
+  -- 키워드 스냅샷 100건 (keyword 텍스트로 찾기)
+  select jsonb_agg(jsonb_build_object('row_number', i + 1, 'kind', 'KEYWORD_SNAPSHOT', 'status', 'VALID',
+    'data', jsonb_build_object('keyword', (select '  ' || upper(keyword) || ' ' from public.keywords where id = pg_temp.jv('kw')),
+      'captured_on', (date '2025-01-01' + i)::text, 'captured_at', ((date '2025-01-01' + i)::text || 'T00:00:00+09:00'),
+      'source_type', 'EXTENSION', 'confidence', 'C', 'search_volume', 1000 + i)))
+  into v_rows from generate_series(0, 99) i;
+  v_res := public.ingest_batch('{"channel": "EXTENSION", "import_type": "KEYWORD_METRICS", "source_type": "EXTENSION"}', v_rows);
+  perform pg_temp.jv_assert('BI02 키워드 스냅샷 100건 (키워드 텍스트 정규화로 찾기)',
+    v_res #>> '{job,status}' = 'SUCCEEDED' and (v_res #>> '{job,inserted_rows}')::int = 100
+    and (select count(*) from public.keyword_snapshots where keyword_id = pg_temp.jv('kw') and source_type = 'EXTENSION' and captured_on < '2025-06-01') = 100,
+    v_res::text);
+
+  -- 순위 100건 (날짜 50 × 자연/광고)
+  select jsonb_agg(jsonb_build_object('row_number', i + 1, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID',
+    'data', jsonb_build_object('keyword_id', pg_temp.jv('kw'),
+      'coupang_product_id', (select coupang_product_id from public.products where id = pg_temp.jv('p3')),
+      'captured_on', (date '2025-01-01' + i / 2)::text, 'captured_at', ((date '2025-01-01' + i / 2)::text || 'T00:00:00+09:00'),
+      'source_type', 'COUPANG_PAGE', 'confidence', 'B', 'rank_position', 1 + i % 2 * 10, 'is_ad', i % 2 = 1)))
+  into v_rows from generate_series(0, 99) i;
+  v_res := public.ingest_batch('{"channel": "EXTENSION", "import_type": "SEARCH_RANKS", "source_type": "COUPANG_PAGE"}', v_rows);
+  perform pg_temp.jv_set('bi_job_r', v_res #>> '{job,id}');
+  perform pg_temp.jv_assert('BI03 순위 100건 (상품은 쿠팡 상품 ID 로 찾기, 자연·광고 별개)',
+    (v_res #>> '{job,inserted_rows}')::int = 100
+    and (select count(*) from public.keyword_product_ranks where product_id = pg_temp.jv('p3') and source_type = 'COUPANG_PAGE' and captured_on < '2025-03-01') = 100,
+    v_res::text);
+
+  -- 혼합: INSERT · UPDATE · SKIP · 앱 검증 실패 · 파일 내 중복 · 미등록 상품 · 범위 위반
+  v_rows := jsonb_build_array(
+    jsonb_build_object('row_number', 2, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+      'captured_on', '2025-06-01', 'captured_at', '2025-06-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'price', 5000)),
+    jsonb_build_object('row_number', 3, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+      'captured_on', '2025-01-01', 'captured_at', '2025-01-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'price', 12345, 'rating', null)),
+    jsonb_build_object('row_number', 4, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID', 'data', jsonb_build_object('keyword_id', pg_temp.jv('kw'),
+      'product_id', pg_temp.jv('p3'), 'captured_on', '2025-01-01', 'captured_at', '2025-01-01T00:00:00+09:00', 'source_type', 'COUPANG_PAGE',
+      'confidence', 'B', 'rank_position', 1, 'is_ad', false)),
+    jsonb_build_object('row_number', 5, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'FAILED', 'error_code', 'INVALID', 'error_message', '수집일 형식 오류', 'payload', '{"raw": {"날짜": "2025-13-01"}}'),
+    jsonb_build_object('row_number', 6, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'SKIPPED', 'error_code', 'DUPLICATE_IN_FILE', 'error_message', '2행과 같은 키'),
+    jsonb_build_object('row_number', 7, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('coupang_product_id', '1234567890999',
+      'captured_on', '2025-06-01', 'captured_at', '2025-06-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'price', 1)),
+    jsonb_build_object('row_number', 8, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+      'captured_on', '2025-06-02', 'captured_at', '2025-06-02T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'rating', 7)));
+  v_res := public.ingest_batch('{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "EXTENSION"}', v_rows);
+  v_job := (v_res #>> '{job,id}')::uuid;
+  perform pg_temp.jv_assert('BI04 혼합 배치: 추가 1 · 갱신 1 · 건너뜀 2 (같은 값 순위 + 중복) · 실패 3 → PARTIAL',
+    v_res #>> '{job,status}' = 'PARTIAL'
+    and (v_res #>> '{job,inserted_rows}')::int = 1 and (v_res #>> '{job,updated_rows}')::int = 1
+    and (v_res #>> '{job,skipped_rows}')::int = 2 and (v_res #>> '{job,failed_rows}')::int = 3
+    and (select string_agg(row_number || ':' || result || ':' || coalesce(error_code, '-'), ' ' order by row_number) from public.import_rows where import_job_id = v_job)
+      = '2:INSERTED:- 3:UPDATED:- 4:SKIPPED:- 5:FAILED:INVALID 6:SKIPPED:DUPLICATE_IN_FILE 7:FAILED:PRODUCT_NOT_FOUND 8:FAILED:OUT_OF_RANGE'
+    and (select error_summary from public.import_jobs where id = v_job) = 'INVALID 1, OUT_OF_RANGE 1, PRODUCT_NOT_FOUND 1',
+    v_res::text);
+  perform pg_temp.jv_assert('BI05 NULL 보존 · 실제 0 보존 (갱신 행: 리뷰 0 유지, 평점 NULL 은 덮어쓰지 않음) · previous 기록',
+    (select price = 12345 and review_count = 0 from public.product_snapshots
+     where product_id = pg_temp.jv('p3') and captured_on = '2025-01-01' and source_type = 'EXTENSION')
+    and (select (previous_values ->> 'price')::int = 10000 from public.import_rows where import_job_id = v_job and row_number = 3)
+    and not exists (select 1 from public.product_snapshots where product_id = pg_temp.jv('p3') and captured_on = '2025-06-02' and source_type = 'EXTENSION'));
+
+  -- 트랜잭션: 3건 저장 후 알 수 없는 레코드 → 전체 롤백 (job · import_rows · 스냅샷 모두 없음)
+  select count(*) into v_n from public.product_snapshots;
+  begin
+    perform public.ingest_batch('{"channel": "EXTENSION", "import_type": "PRODUCT_SNAPSHOTS", "source_type": "EXTENSION", "idempotency_key": "bi-tx-fail"}',
+      jsonb_build_array(
+        jsonb_build_object('row_number', 2, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+          'captured_on', '2025-07-01', 'captured_at', '2025-07-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'price', 1)),
+        jsonb_build_object('row_number', 3, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+          'captured_on', '2025-07-02', 'captured_at', '2025-07-02T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'price', 2)),
+        jsonb_build_object('row_number', 4, 'kind', 'BOGUS', 'status', 'VALID', 'data', '{}')));
+    raise exception 'FAIL BI06: batch with unknown kind succeeded';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL%' then raise; end if;
+  end;
+  perform pg_temp.jv_assert('BI06 중간 시스템 오류 → 전체 롤백 (스냅샷 0 · job 없음 · import_rows 없음)',
+    (select count(*) from public.product_snapshots) = v_n
+    and not exists (select 1 from public.import_jobs where idempotency_key = 'bi-tx-fail')
+    and not exists (select 1 from public.product_snapshots where captured_on in ('2025-07-01', '2025-07-02')));
+
+  -- 같은 배치 재전송 (idempotency_key)
+  select count(*) into v_n from public.product_snapshots where product_id = pg_temp.jv('p3') and source_type = 'EXTENSION';
+  v_res := public.ingest_batch('{"channel": "EXTENSION", "import_type": "PRODUCT_SNAPSHOTS", "source_type": "EXTENSION", "idempotency_key": "bi-batch-p"}',
+    jsonb_build_array(jsonb_build_object('row_number', 2, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+      'captured_on', '2025-08-01', 'captured_at', '2025-08-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'B', 'price', 1))));
+  perform pg_temp.jv_assert('BI07 같은 idempotency_key 재전송 → 처리 안 함 (replay, 같은 job, 데이터 그대로)',
+    (v_res ->> 'replay')::boolean and v_res #>> '{job,id}' = pg_temp.jv('bi_job_p')::text
+    and (select count(*) from public.product_snapshots where product_id = pg_temp.jv('p3') and source_type = 'EXTENSION') = v_n
+    and (select count(*) from public.import_jobs where idempotency_key = 'bi-batch-p') = 1);
+
+  -- 같은 파일 해시
+  perform public.ingest_batch('{"channel": "FILE", "import_type": "SEARCH_RANKS", "source_type": "MANUAL", "file_hash": "bi-hash"}', '[]');
+  begin
+    perform public.ingest_batch('{"channel": "FILE", "import_type": "SEARCH_RANKS", "source_type": "MANUAL", "file_hash": "bi-hash"}', '[]');
+    raise exception 'FAIL BI08: same file hash accepted';
+  exception when unique_violation then
+    perform pg_temp.jv_pass('BI08 같은 파일 해시 재처리 → 23505 (PHASE 9 정책 유지)');
+  end;
+
+  -- 순위 단건 원자 UPSERT
+  v_res := public.upsert_keyword_product_rank(jsonb_build_object('keyword_id', pg_temp.jv('kw'), 'product_id', pg_temp.jv('p3'),
+    'captured_on', '2025-09-01', 'captured_at', '2025-09-01T00:00:00+09:00', 'source_type', 'MANUAL', 'confidence', 'B', 'rank_position', 9, 'page', 1));
+  perform pg_temp.jv_assert('BI09a 순위 새 키 → INSERTED', v_res ->> 'action' = 'INSERTED');
+  v_res := public.upsert_keyword_product_rank(jsonb_build_object('keyword_id', pg_temp.jv('kw'), 'product_id', pg_temp.jv('p3'),
+    'captured_on', '2025-09-01', 'captured_at', '2025-09-01T01:00:00+09:00', 'source_type', 'MANUAL', 'confidence', 'B', 'rank_position', 9));
+  perform pg_temp.jv_assert('BI09b 같은 값 (page NULL = 기존 유지) → SKIPPED · UNIQUE 위반 없음', v_res ->> 'action' = 'SKIPPED');
+  v_res := public.upsert_keyword_product_rank(jsonb_build_object('keyword_id', pg_temp.jv('kw'), 'product_id', pg_temp.jv('p3'),
+    'captured_on', '2025-09-01', 'captured_at', '2025-09-01T02:00:00+09:00', 'source_type', 'MANUAL', 'confidence', 'A', 'rank_position', 4));
+  perform pg_temp.jv_assert('BI09c 값 변경 → UPDATED · previous 반환 · page 보존 · 행 1개',
+    v_res ->> 'action' = 'UPDATED' and (v_res #>> '{previous,rank_position}')::int = 9 and (v_res #>> '{row,page}')::int = 1
+    and (select count(*) from public.keyword_product_ranks where product_id = pg_temp.jv('p3') and captured_on = '2025-09-01' and source_type = 'MANUAL') = 1);
+end;
+$$;
+
+select pg_temp.jv_expect_error('BI10 순위 필수값 누락 → 23502',
+  format($q$select public.upsert_keyword_product_rank('{"keyword_id": "%s", "captured_at": "2025-01-01T00:00:00Z", "source_type": "MANUAL", "confidence": "B"}')$q$, pg_temp.jv('kw')),
+  '23502');
+
+do $$
+declare
+  v_res jsonb;
+begin
+  -- 배치 job 도 rollback_import 로 되돌릴 수 있다
+  v_res := public.rollback_import(pg_temp.jv('bi_job_r'));
+  perform pg_temp.jv_assert('BI11 배치로 넣은 순위 100건 rollback_import 로 삭제 (다른 배치의 SKIPPED 는 막지 않음)',
+    (v_res ->> 'ok')::boolean and (v_res ->> 'deleted_rows')::int = 100
+    and (select count(*) from public.keyword_product_ranks where product_id = pg_temp.jv('p3') and source_type = 'COUPANG_PAGE' and captured_on < '2025-03-01') = 0,
+    v_res::text);
+end;
+$$;
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1330,6 +1490,36 @@ begin
 end;
 $$;
 
+-- BI (B): A 의 상품·키워드·job 에 배치로 쓸 수 없음
+do $$
+declare
+  v_res jsonb;
+  v_job uuid;
+  v_before bigint;
+begin
+  select count(*) into v_before from public.import_rows;
+  v_res := public.ingest_batch('{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "EXTENSION", "idempotency_key": "bi-batch-p"}',
+    jsonb_build_array(
+      jsonb_build_object('row_number', 2, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('product_id', pg_temp.jv('p3'),
+        'captured_on', '2025-10-01', 'captured_at', '2025-10-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'A', 'price', 1)),
+      jsonb_build_object('row_number', 3, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'data', jsonb_build_object('coupang_product_id',
+        (select coupang_product_id from public.products where id = pg_temp.jv('p3')),
+        'captured_on', '2025-10-01', 'captured_at', '2025-10-01T00:00:00+09:00', 'source_type', 'EXTENSION', 'confidence', 'A', 'price', 1)),
+      jsonb_build_object('row_number', 4, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID', 'data', jsonb_build_object('keyword_id', pg_temp.jv('kw'),
+        'product_id', pg_temp.jv('p3'), 'captured_on', '2025-01-01', 'captured_at', '2025-01-01T00:00:00+09:00', 'source_type', 'COUPANG_PAGE',
+        'confidence', 'A', 'rank_position', 99, 'is_ad', false))));
+  v_job := (v_res #>> '{job,id}')::uuid;
+  perform pg_temp.jv_assert('BI12 B 의 배치: A 의 상품 id → NOT_FOUND(FK) · A 의 상품 ID 문자열 → 보이지 않아 PRODUCT_NOT_FOUND · A 키워드 순위 → NOT_FOUND',
+    not (v_res ->> 'replay')::boolean
+    and (select owner_id from public.import_jobs where id = v_job) = pg_temp.jv('user_b')
+    and (select string_agg(row_number || ':' || result || ':' || error_code, ' ' order by row_number) from public.import_rows where import_job_id = v_job)
+      = '2:FAILED:NOT_FOUND 3:FAILED:PRODUCT_NOT_FOUND 4:FAILED:NOT_FOUND',
+    v_res::text);
+  perform pg_temp.jv_assert('BI13 B 는 A 의 idempotency_key 로 A 의 job 을 받지 못함 (사용자별 키)',
+    (select count(*) from public.import_jobs where idempotency_key = 'bi-batch-p') = 1);
+end;
+$$;
+
 -- A 의 데이터가 그대로인지 (postgres 로 확인)
 reset role;
 do $$
@@ -1339,6 +1529,8 @@ begin
     and (select count(*) from public.products where owner_id = pg_temp.jv('user_a')) >= 3
     -- 관심상품: W 섹션 2개 + DS03 의 DROPPED 1개
     and (select count(*) from public.watchlist where owner_id = pg_temp.jv('user_a')) = 3);
+  perform pg_temp.jv_assert('BI14 B 의 배치 시도 후 A 상품 스냅샷 변화 없음',
+    not exists (select 1 from public.product_snapshots where product_id = pg_temp.jv('p3') and captured_on = '2025-10-01'));
   perform pg_temp.jv_assert('SC13 B 의 시도 후 A 점수 보존',
     (select count(*) from public.opportunity_scores where product_id = pg_temp.jv('p3') and is_current) = 2
     and not exists (select 1 from public.opportunity_scores where owner_id = pg_temp.jv('user_b')));
