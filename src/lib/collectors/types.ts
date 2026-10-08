@@ -82,6 +82,16 @@ export interface CollectedSearchItem {
   priceText?: string | null;
   reviewCountText?: string | null;
   ratingText?: string | null;
+  /** 위 글자에서 읽은 값 (PHASE 12 — 선택 상품 · 등록 상품의 상품 스냅샷과 키워드 집계에 쓴다) */
+  price?: number | null;
+  originalPrice?: number | null;
+  discountRate?: number | null;
+  reviewCount?: number | null;
+  rating?: number | null;
+  /** 배송 배지 판정: ROCKET · ROCKET_GROWTH · NONE(로켓 배지 없음) · UNKNOWN(모르는 로켓 계열 배지) */
+  badge?: "ROCKET" | "ROCKET_GROWTH" | "NONE" | "UNKNOWN" | null;
+  deliveryType?: string | null;
+  sellerType?: string | null;
 }
 
 /** 키워드 지표 (키워드 도구·WING 키워드 화면 등에서 본 값) */
@@ -96,6 +106,8 @@ export interface CollectedKeyword extends CollectedBase {
   averagePrice?: Observed;
   averageReviews?: Observed;
   adBid?: Observed;
+  /** 평균 · 비율 계산에 쓴 상품 수 (keyword_snapshots.sample_size) */
+  sampleSize?: number | null;
 }
 
 export interface NormalizeIssue {

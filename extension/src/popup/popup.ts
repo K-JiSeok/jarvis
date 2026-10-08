@@ -1,6 +1,6 @@
 /** 팝업: 로그인 · 현재 페이지 상태 · [현재 페이지 수집] · 마지막 결과 */
 
-import { PAGE_LABELS, type CollectResponse, type DetectResponse, type LastRun, type Message } from "../shared/types";
+import { PAGE_LABELS, type DetectResponse, type LastRun, type Message } from "../shared/types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -46,7 +46,8 @@ function renderLast(run: LastRun | null) {
     rows.push(["전체", r.total ?? 0], ["추가", r.inserted ?? 0], ["업데이트", r.updated ?? 0], ["건너뜀", r.skipped ?? 0], ["실패", r.failed ?? 0]);
     for (const [code, n] of Object.entries(r.failures ?? {})) rows.push([`  ${code}`, n]);
     if (r.replay) rows.push(["", "이미 저장된 수집 (재전송)"]);
-  } else rows.push(["오류", r.error ?? "알 수 없음"]);
+    if (r.registered) rows.push(["선택 · 신규 등록 · 기존", `${r.registered.selected} · ${r.registered.created} · ${r.registered.existing}`]);
+  } else rows.push(["오류", r.rolledBack ? `${r.error ?? "오류"} (이번 작업은 롤백되었습니다)` : (r.error ?? "알 수 없음")]);
 
   box.replaceChildren();
   const table = document.createElement("table");
@@ -103,6 +104,7 @@ async function refresh() {
     return;
   }
   $("page").textContent = PAGE_LABELS[d.pageType];
+  $("search-hint").hidden = d.pageType !== "search";
   button.textContent = d.pageType === "search" ? "현재 검색 결과 수집" : d.pageType === "product" ? "현재 상품 수집" : "현재 데이터 수집";
   $("summary").replaceChildren(...d.summary.map((s) => Object.assign(document.createElement("li"), { textContent: s })));
   button.disabled = !d.collectable;
@@ -114,14 +116,14 @@ $("collect").addEventListener("click", async () => {
   const button = $<HTMLButtonElement>("collect");
   button.disabled = true;
   setState("busy");
-  const c = await activeTabMessage<CollectResponse>({ type: "jarvis:collect" });
-  if (!c?.ok) {
-    setState("error", c?.error ?? "화면을 읽지 못했습니다.");
+  // 페이지의 전체 흐름을 콘텐츠 스크립트가 실행한다 (검색 결과: 등록 여부 확인 → 저장 → 쿠팡 화면 패널에 후보 표시)
+  const run = await activeTabMessage<LastRun>({ type: "jarvis:run" });
+  if (!run) {
+    setState("error", "화면을 읽지 못했습니다.");
     button.disabled = false;
     return;
   }
-  $("summary").replaceChildren(...c.summary.map((s) => Object.assign(document.createElement("li"), { textContent: s })));
-  const run = await send<LastRun>({ type: "jarvis:ingest", collect: c });
+  $("summary").replaceChildren(...run.summary.map((s) => Object.assign(document.createElement("li"), { textContent: s })));
   renderLast(run);
   if (run.result.ok) setState("done");
   else setState("error", run.result.error);

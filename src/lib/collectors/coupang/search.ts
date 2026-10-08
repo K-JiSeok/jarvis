@@ -15,9 +15,9 @@
  * - 1페이지만 순위로 저장한다. 2페이지 이상에서 순위가 이어지는지 확인하지 못했다 (PHASE 11 보고서).
  */
 
-import type { CollectedSearchItem, CollectedSearchResult } from "../types";
+import type { CollectedKeyword, CollectedProduct, CollectedSearchItem, CollectedSearchResult } from "../types";
 
-import { productIdFromUrl, type CollectMeta } from "./product";
+import { badgeFromImageName, deliveryFromBadges, firstNumber, percentFromText, productIdFromUrl, type CollectMeta } from "./product";
 
 export interface RawCoupangSearchItem {
   href: string;
@@ -26,6 +26,8 @@ export interface RawCoupangSearchItem {
   rankBadgeText?: string | null;
   productName?: string | null;
   priceText?: string | null;
+  originalPriceText?: string | null;
+  discountText?: string | null;
   reviewCountText?: string | null;
   ratingText?: string | null;
   badgeImageNames?: string[] | null;
@@ -70,6 +72,21 @@ export function correctedQueryOf(url: string): string | null {
 
 export const isAdLabel = (text: string | null | undefined) => !!text && /^(광고|AD|sponsored)$/i.test(text.trim());
 
+/**
+ * 검색 칸의 배송 배지 (이미지 파일 이름, PHASE 11 확인).
+ *   로켓배송 · 판매자로켓 배지 → 그 배송 유형
+ *   로켓 계열 이미지가 하나도 없음 → NONE (로켓 아님. 실제 화면에서 "모레 도착", "10/21 도착" 같은 판매자 배송 상품)
+ *   로켓 계열 이미지인데 모르는 파일 → UNKNOWN (로켓프레시 · 로켓직구 등 미확인 배지 — 비율 계산에서 뺀다)
+ */
+export type SearchBadge = "ROCKET" | "ROCKET_GROWTH" | "NONE" | "UNKNOWN";
+
+export function searchBadgeOf(imageNames: string[] | null | undefined): SearchBadge {
+  const rocketish = (imageNames ?? []).filter((n) => /logo_rocket|rocket/i.test(n));
+  if (rocketish.length === 0) return "NONE";
+  const delivery = deliveryFromBadges(rocketish.map(badgeFromImageName).filter((b): b is string => !!b));
+  return delivery === "ROCKET" || delivery === "ROCKET_GROWTH" ? delivery : "UNKNOWN";
+}
+
 export function adaptSearchPage(raw: RawCoupangSearchPage, meta: CollectMeta): CollectedSearchResult {
   const { keyword, page } = searchParamsOf(raw.url);
   let organic = 0;
@@ -77,6 +94,7 @@ export function adaptSearchPage(raw: RawCoupangSearchPage, meta: CollectMeta): C
   const items: CollectedSearchItem[] = raw.items.map((item, i) => {
     const isAd = isAdLabel(item.adLabelText);
     const rank = isAd ? ++ads : ++organic;
+    const badge = searchBadgeOf(item.badgeImageNames);
     return {
       coupangProductId: productIdFromUrl(item.href),
       productUrl: item.href,
@@ -88,8 +106,120 @@ export function adaptSearchPage(raw: RawCoupangSearchPage, meta: CollectMeta): C
       priceText: item.priceText ?? null,
       reviewCountText: item.reviewCountText ?? null,
       ratingText: item.ratingText ?? null,
+      price: firstNumber(item.priceText),
+      originalPrice: firstNumber(item.originalPriceText),
+      discountRate: percentFromText(item.discountText),
+      reviewCount: firstNumber(item.reviewCountText),
+      rating: firstNumber(item.ratingText),
+      badge,
+      // 검색 칸에는 판매자 정보가 없다 → 판매자로켓(로켓그로스 판매자)만 배지로 확정, 나머지는 모름
+      deliveryType: badge === "ROCKET" || badge === "ROCKET_GROWTH" ? badge : null,
+      sellerType: badge === "ROCKET_GROWTH" ? "ROCKET_GROWTH_SELLER" : null,
     };
   });
   // 검색어는 URL 의 q 를 먼저 쓴다 (검색창 글자는 사용자가 고치는 중일 수 있다)
   return { ...meta, keyword: keyword || raw.keyword?.trim() || "", page, items };
+}
+
+/** 같은 상품이 여러 칸이면 첫 칸만 (자연 · 광고 각각의 가장 앞 순위도 함께) — 후보 목록 · 상품 데이터 저장용 */
+export interface SearchProduct {
+  coupangProductId: string;
+  item: CollectedSearchItem;
+  organicRank: number | null;
+  adRank: number | null;
+  appearances: number;
+}
+
+export function uniqueSearchProducts(result: CollectedSearchResult): SearchProduct[] {
+  const map = new Map<string, SearchProduct>();
+  for (const item of result.items) {
+    const id = item.coupangProductId ?? productIdFromUrl(item.productUrl);
+    if (!id) continue;
+    const p = map.get(id) ?? { coupangProductId: id, item, organicRank: null, adRank: null, appearances: 0 };
+    p.appearances += 1;
+    const rank = Number(item.rank);
+    if (item.isAd) p.adRank ??= rank;
+    else p.organicRank ??= rank;
+    // 상품 값은 자연 노출 칸을 우선 (광고 칸과 값이 같지만 자연 노출이 검색 결과 본래 값)
+    if (!item.isAd && p.item.isAd) p.item = item;
+    map.set(id, p);
+  }
+  return [...map.values()];
+}
+
+/**
+ * 검색 1페이지 집계 → 키워드 스냅샷 (average_price · average_reviews · rocket_ratio · sample_size).
+ * 기준 (collector 규칙 그대로): 검색 결과 상품 칸만 (묶음 칸 제외는 DOM 단계), 광고 칸 제외, 같은 상품 반복은 첫 칸만.
+ *   average_price   = 가격을 읽은 상품의 판매가 평균 (원, 반올림)
+ *   average_reviews = 리뷰 수를 읽은 상품의 평균 (소수 1자리)
+ *   rocket_ratio    = 배지를 판정한 상품 중 로켓배송 · 판매자로켓 비율 (UNKNOWN 배지는 분모에서 뺀다)
+ *   sample_size     = 집계에 쓴 상품 수 (광고 제외 · 중복 제외)
+ * 값을 읽은 상품이 없으면 그 항목은 비운다 (NULL = 모름).
+ */
+export interface SearchAggregate {
+  sampleSize: number;
+  priceCount: number;
+  reviewCount: number;
+  badgeCount: number;
+  rocketCount: number;
+  averagePrice: number | null;
+  averageReviews: number | null;
+  rocketRatio: number | null;
+}
+
+export function aggregateSearch(result: CollectedSearchResult): SearchAggregate {
+  const organic = uniqueSearchProducts({ ...result, items: result.items.filter((i) => !i.isAd) }).map((p) => p.item);
+  const prices = organic.map((i) => i.price).filter((v): v is number => typeof v === "number" && v > 0);
+  const reviews = organic.map((i) => i.reviewCount).filter((v): v is number => typeof v === "number" && v >= 0);
+  const judged = organic.filter((i) => i.badge && i.badge !== "UNKNOWN");
+  const rocket = judged.filter((i) => i.badge === "ROCKET" || i.badge === "ROCKET_GROWTH").length;
+  const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  return {
+    sampleSize: organic.length,
+    priceCount: prices.length,
+    reviewCount: reviews.length,
+    badgeCount: judged.length,
+    rocketCount: rocket,
+    averagePrice: prices.length ? Math.round(avg(prices)) : null,
+    averageReviews: reviews.length ? Math.round(avg(reviews) * 10) / 10 : null,
+    rocketRatio: judged.length ? Math.round((rocket / judged.length) * 10000) / 10000 : null,
+  };
+}
+
+export function searchToKeywordRecord(result: CollectedSearchResult, agg = aggregateSearch(result)): CollectedKeyword | null {
+  if (agg.sampleSize === 0) return null;
+  return {
+    source: result.source,
+    confidence: result.confidence,
+    capturedAt: result.capturedAt,
+    tool: result.tool,
+    keyword: result.keyword,
+    averagePrice: agg.averagePrice,
+    averageReviews: agg.averageReviews,
+    rocketRatio: agg.rocketRatio,
+    sampleSize: agg.sampleSize,
+  };
+}
+
+/** 검색 칸 → 상품 스냅샷 (화면 칸에 보인 값만: 가격 · 정가 · 할인율 · 리뷰 · 평점 · 배송 · 판매자 유형) */
+export function searchItemToProduct(result: CollectedSearchResult, p: SearchProduct): CollectedProduct {
+  const i = p.item;
+  return {
+    source: result.source,
+    confidence: result.confidence,
+    capturedAt: result.capturedAt,
+    tool: result.tool,
+    coupangProductId: p.coupangProductId,
+    productUrl: i.productUrl ?? null,
+    productName: i.productName ?? null,
+    price: i.price ?? null,
+    originalPrice: i.originalPrice ?? null,
+    discountRate: i.discountRate ?? null,
+    reviewCount: i.reviewCount ?? null,
+    // 평점은 넣지 않는다: 검색 칸의 별점(aria-label)은 0.5 단위로 반올림된 값 (예: 상품 페이지 3.8 → 검색 칸 4).
+    // 같은 날 상품 페이지에서 읽은 정확한 평점을 덮어쓰지 않도록 수집 기록(observedOnly)에만 남긴다 (PHASE 12 실사용에서 발견)
+    deliveryType: i.deliveryType ?? null,
+    sellerType: i.sellerType ?? null,
+    observedOnly: { from: "search", keyword: result.keyword, organicRank: p.organicRank, adRank: p.adRank, badge: i.badge ?? null, searchStarRating: i.rating ?? null },
+  };
 }

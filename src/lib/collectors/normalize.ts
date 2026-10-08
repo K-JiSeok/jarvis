@@ -176,6 +176,11 @@ export function normalizeKeyword(c: CollectedKeyword): { record: NormalizedKeywo
   put("average_price", c.averagePrice);
   put("average_reviews", c.averageReviews);
   put("ad_bid", c.adBid);
+  // 표본 수: 파일 가져오기 필드가 아니라 수집기 집계에만 있는 값 (1~32767 정수만)
+  if (c.sampleSize != null) {
+    if (Number.isInteger(c.sampleSize) && c.sampleSize >= 1 && c.sampleSize <= 32767) metrics.sample_size = c.sampleSize;
+    else issues.push({ field: "sampleSize", message: `표본 수 ${c.sampleSize} 는 1 이상 정수가 아닙니다` });
+  }
 
   const calculated: string[] = [];
   if (metrics.coupang_product_count != null && metrics.search_volume) {

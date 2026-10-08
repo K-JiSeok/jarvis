@@ -3,7 +3,7 @@ import "server-only";
 import { normalizeKeyword, normalizeProduct, normalizeSearch } from "@/lib/collectors/normalize";
 import type { CollectedKeyword, CollectedProduct, CollectedSearchResult, NormalizeIssue } from "@/lib/collectors/types";
 import type { NormalizedRecord } from "@/lib/import/core";
-import { ingestBatch, type BatchJob, type IngestOutcome } from "@/lib/repositories/ingest";
+import { ingestBatch, registerAndIngest, type BatchJob, type IngestOutcome, type RegisterOutcome, type RegisterProduct } from "@/lib/repositories/ingest";
 import type { Database } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -115,6 +115,39 @@ export async function ingestCollected(
     },
     rows,
     options.client,
+  );
+  return { ...outcome, issues };
+}
+
+/**
+ * 검색 결과에서 사용자가 고른 상품 등록 + 같은 배치 저장 (PHASE 12).
+ *   고른 상품(· 키워드) 생성 → ingestCollected 와 같은 정규화 · 배치 행 → register_products_and_ingest (한 트랜잭션)
+ * 저장 행이 하나라도 실패하면 상품 생성까지 전부 롤백된다.
+ */
+export async function registerSelected(
+  batch: CollectedBatch,
+  selection: { products: RegisterProduct[]; keyword: { keyword: string; memo: string | null } | null },
+  client: SupabaseClient<Database>,
+): Promise<RegisterOutcome & { issues: NormalizeIssue[] }> {
+  const { rows, issues, sources } = collectedToRows(batch);
+  if (rows.length === 0) throw new IngestInputError("저장할 레코드가 없습니다.");
+  if (rows.length > MAX_INGEST_RECORDS) throw new IngestInputError(`한 배치는 최대 ${MAX_INGEST_RECORDS}건입니다 (${rows.length}건).`);
+  // 정규화에서 이미 버려진 행이 있으면 DB 가 전부 롤백할 것이므로 미리 알린다
+  const invalid = rows.filter((r) => r.status === "FAILED");
+  if (invalid.length > 0) throw new IngestInputError(`읽을 수 없는 값이 있어 등록하지 않았습니다: ${invalid[0].error_message ?? ""}`.slice(0, 300));
+  const outcome = await registerAndIngest(
+    selection,
+    {
+      channel: "EXTENSION",
+      import_type: "MIXED",
+      source_type: sources.size === 1 ? [...sources][0] : "EXTENSION",
+      source_tool: batch.tool ?? null,
+      idempotency_key: batch.idempotencyKey ?? null,
+      schema_version: "register-v1",
+      column_mapping: { register: { products: selection.products.length, keyword: selection.keyword?.keyword ?? null } },
+    },
+    rows,
+    client,
   );
   return { ...outcome, issues };
 }

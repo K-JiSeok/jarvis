@@ -1347,6 +1347,89 @@ end;
 $$;
 
 -- ===========================================================================
+-- RG. 검색 결과 선택 상품 등록 + 저장 register_products_and_ingest (PHASE 12)
+-- ===========================================================================
+do $$
+declare
+  v_rows jsonb;
+  v_prod jsonb;
+  v_res jsonb;
+  v_n bigint;
+  v_state text;
+begin
+  perform pg_temp.jv_assert('RG00 새 함수 SECURITY INVOKER · anon 실행 불가 · authenticated 실행 가능',
+    (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'register_products_and_ingest' and not p.prosecdef
+       and not has_function_privilege('anon', p.oid, 'EXECUTE') and has_function_privilege('authenticated', p.oid, 'EXECUTE')) = 1);
+
+  -- 기존 상품 2개 (rg-old-1, rg-old-2) + 새 상품 3개를 고른 상황
+  insert into public.products (coupang_product_id, product_name) values ('77000001', 'rg 기존 1'), ('77000002', 'rg 기존 2');
+  select jsonb_agg(jsonb_build_object('coupang_product_id', '7700000' || i, 'product_name', 'rg 상품 ' || i)) into v_prod from generate_series(1, 5) i;
+  select jsonb_agg(jsonb_build_object('row_number', i, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID', 'record_key', 'rg-r-' || i,
+    'data', jsonb_build_object('keyword', ' RG  캠핑의자 ', 'coupang_product_id', '7700000' || i, 'captured_on', '2026-10-08',
+      'captured_at', '2026-10-08T06:00:00Z', 'source_type', 'COUPANG_PAGE', 'confidence', 'A', 'rank_position', i, 'is_ad', false, 'page', 1)))
+    || jsonb_agg(jsonb_build_object('row_number', 10 + i, 'kind', 'PRODUCT_SNAPSHOT', 'status', 'VALID', 'record_key', 'rg-p-' || i,
+    'data', jsonb_build_object('coupang_product_id', '7700000' || i, 'captured_on', '2026-10-08', 'captured_at', '2026-10-08T06:00:00Z',
+      'source_type', 'COUPANG_PAGE', 'confidence', 'A', 'price', 10000 * i, 'review_count', i, 'delivery_type', 'ROCKET')))
+  into v_rows from generate_series(1, 5) i;
+
+  v_res := public.register_products_and_ingest('{"keyword": "RG 캠핑의자", "memo": "rg"}', v_prod,
+    '{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "COUPANG_PAGE", "idempotency_key": "rg-key-1"}', v_rows);
+  perform pg_temp.jv_assert('RG01 신규 3 + 기존 2 → 상품 생성 3 · 기존 2 · 순위 5 · 스냅샷 5 · 키워드 생성',
+    (v_res ->> 'created_products')::int = 3 and (v_res ->> 'existing_products')::int = 2 and (v_res ->> 'keyword_created')::boolean
+    and jsonb_array_length(v_res -> 'created_product_ids') = 3
+    and (v_res #>> '{job,inserted_rows}')::int = 10 and (v_res #>> '{job,status}') = 'SUCCEEDED'
+    and (select count(*) from public.products where coupang_product_id like '7700000%') = 5
+    and (select count(*) from public.keyword_product_ranks r join public.keywords k on k.id = r.keyword_id where k.normalized_keyword = 'rg 캠핑의자') = 5,
+    v_res::text);
+
+  -- 같은 요청 재전송 (네트워크 재시도)
+  v_res := public.register_products_and_ingest('{"keyword": "RG 캠핑의자"}', v_prod,
+    '{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "COUPANG_PAGE", "idempotency_key": "rg-key-1"}', v_rows);
+  perform pg_temp.jv_assert('RG02 같은 idempotency_key → replay · 상품 생성 0 · 중복 없음',
+    (v_res ->> 'replay')::boolean and (v_res ->> 'created_products')::int = 0
+    and (select count(*) from public.products where coupang_product_id like '7700000%') = 5, v_res::text);
+
+  -- 같은 상품을 다시 고름 (새 수집)
+  v_res := public.register_products_and_ingest(null, v_prod,
+    '{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "COUPANG_PAGE", "idempotency_key": "rg-key-2"}', v_rows);
+  perform pg_temp.jv_assert('RG03 같은 상품 다시 선택 → 생성 0 · 기존 5 · 순위·스냅샷 같은 값은 건너뜀/갱신 (중복 행 없음)',
+    (v_res ->> 'created_products')::int = 0 and (v_res ->> 'existing_products')::int = 5
+    and (v_res #>> '{job,failed_rows}')::int = 0
+    and (select count(*) from public.products where coupang_product_id like '7700000%') = 5
+    and (select count(*) from public.keyword_product_ranks r join public.products p on p.id = r.product_id where p.coupang_product_id like '7700000%') = 5
+    and (select count(*) from public.product_snapshots s join public.products p on p.id = s.product_id where p.coupang_product_id like '7700000%') = 5,
+    v_res::text);
+
+  -- 중간 실패: 고르지 않은(미등록) 상품의 순위가 섞임 → 전부 롤백
+  v_rows := jsonb_build_array(
+    jsonb_build_object('row_number', 1, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID', 'data', jsonb_build_object('keyword', 'rg 롤백',
+      'coupang_product_id', '77000099', 'captured_on', '2026-10-08', 'captured_at', '2026-10-08T06:00:00Z', 'source_type', 'COUPANG_PAGE',
+      'confidence', 'A', 'rank_position', 1, 'is_ad', false)),
+    jsonb_build_object('row_number', 2, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID', 'data', jsonb_build_object('keyword', 'rg 롤백',
+      'coupang_product_id', '77000098', 'captured_on', '2026-10-08', 'captured_at', '2026-10-08T06:00:00Z', 'source_type', 'COUPANG_PAGE',
+      'confidence', 'A', 'rank_position', 2, 'is_ad', false)));
+  begin
+    perform public.register_products_and_ingest('{"keyword": "rg 롤백"}', '[{"coupang_product_id": "77000099", "product_name": "rg 롤백 상품"}]',
+      '{"channel": "EXTENSION", "import_type": "SEARCH_RANKS", "source_type": "COUPANG_PAGE", "idempotency_key": "rg-key-3"}', v_rows);
+    v_state := 'no error';
+  exception when others then
+    v_state := sqlstate;
+  end;
+  perform pg_temp.jv_assert('RG04 저장 행 실패(PRODUCT_NOT_FOUND) → P0001 · 만든 상품 · 키워드 · job 모두 롤백',
+    v_state = 'P0001'
+    and not exists (select 1 from public.products where coupang_product_id = '77000099')
+    and not exists (select 1 from public.keywords where normalized_keyword = 'rg 롤백')
+    and not exists (select 1 from public.import_jobs where idempotency_key = 'rg-key-3'), v_state);
+end;
+$$;
+
+select pg_temp.jv_expect_error('RG05 잘못된 쿠팡 상품 ID → 22023',
+  $q$select public.register_products_and_ingest(null, '[{"coupang_product_id": "abc"}]', '{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "COUPANG_PAGE"}', '[]')$q$, '22023');
+select pg_temp.jv_expect_error('RG06 상품 101개 → 54000',
+  $q$select public.register_products_and_ingest(null, (select jsonb_agg(jsonb_build_object('coupang_product_id', i::text)) from generate_series(1, 101) i), '{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "COUPANG_PAGE"}', '[]')$q$, '54000');
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1520,6 +1603,23 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_res jsonb;
+begin
+  -- B 가 A 와 같은 쿠팡 상품 ID 를 고름 → B 자신의 상품으로 생성 (A 의 상품을 "기존"으로 보지 못함), A 의 replay 키도 못 씀
+  v_res := public.register_products_and_ingest('{"keyword": "RG 캠핑의자"}', '[{"coupang_product_id": "77000001", "product_name": "B 상품"}]',
+    '{"channel": "EXTENSION", "import_type": "SEARCH_RANKS", "source_type": "COUPANG_PAGE", "idempotency_key": "rg-key-1"}',
+    jsonb_build_array(jsonb_build_object('row_number', 1, 'kind', 'KEYWORD_PRODUCT_RANK', 'status', 'VALID', 'data', jsonb_build_object(
+      'keyword', 'RG 캠핑의자', 'coupang_product_id', '77000001', 'captured_on', '2026-10-08', 'captured_at', '2026-10-08T06:00:00Z',
+      'source_type', 'COUPANG_PAGE', 'confidence', 'A', 'rank_position', 9, 'is_ad', false))));
+  perform pg_temp.jv_assert('RG07 B: A 의 상품 · 키워드 · job 을 보지 못함 → 자기 상품 1 · 키워드 1 새로 생성 (replay 아님)',
+    not (v_res ->> 'replay')::boolean and (v_res ->> 'created_products')::int = 1 and (v_res ->> 'keyword_created')::boolean
+    and (select count(*) from public.products where coupang_product_id like '7700000%') = 1
+    and (select count(*) from public.keyword_product_ranks) = 1, v_res::text);
+end;
+$$;
+
 -- A 의 데이터가 그대로인지 (postgres 로 확인)
 reset role;
 do $$
@@ -1529,6 +1629,11 @@ begin
     and (select count(*) from public.products where owner_id = pg_temp.jv('user_a')) >= 3
     -- 관심상품: W 섹션 2개 + DS03 의 DROPPED 1개
     and (select count(*) from public.watchlist where owner_id = pg_temp.jv('user_a')) = 3);
+  perform pg_temp.jv_assert('RG08 B 의 등록 후 A 의 상품 5 · 순위 5 그대로 (B 순위 9위가 A 에 섞이지 않음)',
+    (select count(*) from public.products where owner_id = pg_temp.jv('user_a') and coupang_product_id like '7700000%') = 5
+    and (select count(*) from public.keyword_product_ranks r join public.products p on p.id = r.product_id
+         where r.owner_id = pg_temp.jv('user_a') and p.coupang_product_id like '7700000%' and r.rank_position <= 5) = 5
+    and not exists (select 1 from public.keyword_product_ranks where owner_id = pg_temp.jv('user_a') and rank_position = 9 and captured_on = '2026-10-08'));
   perform pg_temp.jv_assert('BI14 B 의 배치 시도 후 A 상품 스냅샷 변화 없음',
     not exists (select 1 from public.product_snapshots where product_id = pg_temp.jv('p3') and captured_on = '2025-10-01'));
   perform pg_temp.jv_assert('SC13 B 의 시도 후 A 점수 보존',

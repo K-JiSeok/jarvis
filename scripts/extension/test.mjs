@@ -14,8 +14,17 @@ import {
   ratingFromStarWidth,
   sellerNameFromInfo,
 } from "../../src/lib/collectors/coupang/product.ts";
-import { adaptSearchPage, correctedQueryOf, searchParamsOf } from "../../src/lib/collectors/coupang/search.ts";
-import { normalizeProduct, normalizeSearch } from "../../src/lib/collectors/normalize.ts";
+import {
+  adaptSearchPage,
+  aggregateSearch,
+  correctedQueryOf,
+  searchBadgeOf,
+  searchItemToProduct,
+  searchParamsOf,
+  searchToKeywordRecord,
+  uniqueSearchProducts,
+} from "../../src/lib/collectors/coupang/search.ts";
+import { normalizeKeyword, normalizeProduct, normalizeSearch } from "../../src/lib/collectors/normalize.ts";
 import {
   allowedOrigins,
   bearerToken,
@@ -23,11 +32,14 @@ import {
   JARVIS_EXTENSION_ID,
   MAX_RECORDS,
   parseIngestRequest,
+  parseLookupRequest,
+  parseRegisterRequest,
   RateLimiter,
 } from "../../src/lib/ingest/api-request.ts";
+import { jobOutcome, parseErrorSummary } from "../../src/lib/ingest/outcome.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const groups = { Extension: [], Collector: [], Normalize: [], API: [] };
+const groups = { Extension: [], Collector: [], Normalize: [], API: [], Phase12: [] };
 const test = (g, name, fn) => groups[g].push([name, fn]);
 const META = { source: "COUPANG_PAGE", confidence: "A", capturedAt: new Date().toISOString() };
 const L = (...parts) => parts.map((p) => (p.endsWith("~") ? { text: p.slice(0, -1), strike: true } : { text: p }));
@@ -282,6 +294,119 @@ test("API", "사용자별 요청 제한: 1분 30회 · 31번째 거부(남은 �
   assert.ok(rl.take("u1", 2000) > 0);
   assert.equal(rl.take("u2", 2000), 0);
   assert.equal(rl.take("u1", 61_001), 0);
+});
+
+// Phase 12 -----------------------------------------------------------------------------------
+// 실제 화면처럼: 광고 2칸 · 자연 5칸 (같은 상품 반복 1번 · 로켓 배지 없음 1 · 모르는 로켓 배지 1)
+const P12_RAW = {
+  url: "https://www.coupang.com/np/search?q=%EC%BA%A0%ED%95%91%EC%9D%98%EC%9E%90",
+  items: [
+    { href: "https://www.coupang.com/vp/products/1001", adLabelText: "광고", productName: "광고A", priceText: "30,000원", reviewCountText: "(100)", ratingText: "4.5", badgeImageNames: ["logo_rocket_filter_medium.png"] },
+    { href: "https://www.coupang.com/vp/products/1002", rankBadgeText: "1", productName: "자연1", priceText: "27,990원", originalPriceText: "84,000원", discountText: "66%", reviewCountText: "(13,372)", ratingText: "4.5", badgeImageNames: ["logo_rocket_filter_medium.png"] },
+    { href: "https://www.coupang.com/vp/products/1003", rankBadgeText: "2", productName: "자연2", priceText: "19,100원", reviewCountText: "(1,221)", ratingText: "4.5", badgeImageNames: ["logo_rocket_merchant_medium_v3_r3.png"] },
+    { href: "https://www.coupang.com/vp/products/1002", rankBadgeText: "3", productName: "자연1 옵션", priceText: "29,000원", reviewCountText: "(13,372)", ratingText: "4.5", badgeImageNames: ["logo_rocket_filter_medium.png"] },
+    { href: "https://www.coupang.com/vp/products/1004", adLabelText: "광고", productName: "광고B", priceText: "9,900원", badgeImageNames: [] },
+    { href: "https://www.coupang.com/vp/products/1005", rankBadgeText: "4", productName: "판매자배송", priceText: "8,900원", reviewCountText: "(189)", ratingText: "4", badgeImageNames: [] },
+    { href: "https://www.coupang.com/vp/products/1006", rankBadgeText: "5", productName: "모르는배지", priceText: null, reviewCountText: null, badgeImageNames: ["logo_rocket_fresh_x.png"] },
+  ],
+};
+const p12 = () => adaptSearchPage(P12_RAW, META);
+test("Phase12", "검색 칸 배송 배지: 로켓배송 · 판매자로켓 · 배지 없음(NONE) · 모르는 로켓 배지(UNKNOWN)", () => {
+  assert.equal(searchBadgeOf(["logo_rocket_filter_medium.png"]), "ROCKET");
+  assert.equal(searchBadgeOf(["logo_rocket_merchant_medium_v3_r3.png"]), "ROCKET_GROWTH");
+  assert.equal(searchBadgeOf([]), "NONE");
+  assert.equal(searchBadgeOf(["logo_rocket_fresh_x.png"]), "UNKNOWN");
+  const s = p12();
+  assert.deepEqual(
+    s.items.map((i) => [i.price, i.reviewCount, i.rating, i.deliveryType, i.sellerType]),
+    [
+      [30000, 100, 4.5, "ROCKET", null],
+      [27990, 13372, 4.5, "ROCKET", null],
+      [19100, 1221, 4.5, "ROCKET_GROWTH", "ROCKET_GROWTH_SELLER"],
+      [29000, 13372, 4.5, "ROCKET", null],
+      [9900, null, null, null, null],
+      [8900, 189, 4, null, null],
+      [null, null, null, null, null],
+    ],
+  );
+  assert.deepEqual([s.items[1].originalPrice, s.items[1].discountRate], [84000, 0.66]);
+});
+test("Phase12", "서로 다른 상품: 반복 칸은 첫 칸만 · 자연/광고 첫 순위 · 노출 횟수", () => {
+  const u = uniqueSearchProducts(p12());
+  assert.deepEqual(
+    u.map((p) => [p.coupangProductId, p.organicRank, p.adRank, p.appearances]),
+    [["1001", null, 1, 1], ["1002", 1, null, 2], ["1003", 2, null, 1], ["1004", null, 2, 1], ["1005", 4, null, 1], ["1006", 5, null, 1]],
+  );
+  assert.equal(u[1].item.productName, "자연1");
+});
+test("Phase12", "1페이지 집계 (광고 · 중복 제외): 평균가 · 평균 리뷰 · 로켓 비율 = 손 계산과 같음", () => {
+  const a = aggregateSearch(p12());
+  // 자연 · 중복 제외: 1002(27,990 · 13,372 · ROCKET) 1003(19,100 · 1,221 · GROWTH) 1005(8,900 · 189 · NONE) 1006(값 없음 · UNKNOWN)
+  assert.equal(a.sampleSize, 4);
+  assert.equal(a.averagePrice, Math.round((27990 + 19100 + 8900) / 3));
+  assert.equal(a.averageReviews, Math.round(((13372 + 1221 + 189) / 3) * 10) / 10);
+  assert.equal(a.rocketRatio, Math.round((2 / 3) * 10000) / 10000);
+  assert.deepEqual([a.priceCount, a.reviewCount, a.badgeCount, a.rocketCount], [3, 3, 3, 2]);
+});
+test("Phase12", "집계 → 키워드 스냅샷 (COUPANG_PAGE · A · sample_size), 표본 없으면 레코드 없음", () => {
+  const { record, issues } = normalizeKeyword(searchToKeywordRecord(p12()));
+  assert.deepEqual(issues, []);
+  assert.equal(record.source, "COUPANG_PAGE");
+  assert.equal(record.confidence, "A");
+  assert.deepEqual(record.metrics, { average_price: 18663, average_reviews: 4927.3, rocket_ratio: 0.6667, sample_size: 4 });
+  assert.equal(searchToKeywordRecord({ ...p12(), items: [] }), null);
+  assert.equal(normalizeKeyword({ ...searchToKeywordRecord(p12()), sampleSize: 0 }).issues.length, 1);
+});
+test("Phase12", "검색 칸 → 상품 스냅샷: 화면 칸 값만 · 반올림 별점 · 판매량 필드 없음", () => {
+  const s = p12();
+  const u = uniqueSearchProducts(s);
+  const { record, issues } = normalizeProduct(searchItemToProduct(s, u[2]));
+  assert.deepEqual(issues, []);
+  // 평점은 저장하지 않는다 (검색 칸 별점은 0.5 단위 반올림) → 수집 기록에만
+  assert.deepEqual(record.metrics, { product_name_observed: "자연2", price: 19100, review_count: 1221, delivery_type: "ROCKET_GROWTH", seller_type_observed: "ROCKET_GROWTH_SELLER" });
+  assert.equal(searchItemToProduct(s, u[2]).observedOnly.searchStarRating, 4.5);
+  const n = normalizeProduct(searchItemToProduct(s, u[1])).record;
+  assert.deepEqual([n.metrics.original_price, n.metrics.discount_rate, n.metrics.seller_type_observed], [84000, 0.66, undefined]);
+  assert.equal(Object.keys(n.metrics).some((k) => k.startsWith("sales") || k.startsWith("revenue")), false);
+});
+test("Phase12", "결과 상태: 완료 · 일부 미등록 · 등록 상품 없음 · 부분 오류 · 실패 구분", () => {
+  assert.deepEqual(parseErrorSummary("KEYWORD_NOT_FOUND 3, PRODUCT_NOT_FOUND 42"), { KEYWORD_NOT_FOUND: 3, PRODUCT_NOT_FOUND: 42 });
+  assert.equal(parseErrorSummary("전체 롤백 (저장된 데이터 없음): 22P02 x"), null);
+  assert.equal(jobOutcome({ status: "SUCCEEDED", error_summary: null }), "COMPLETED");
+  assert.equal(jobOutcome({ status: "PARTIAL", error_summary: "PRODUCT_NOT_FOUND 42" }), "PARTIAL");
+  assert.equal(jobOutcome({ status: "PARTIAL", error_summary: "INVALID 1, PRODUCT_NOT_FOUND 2" }), "PARTIAL_ERROR");
+  assert.equal(jobOutcome({ status: "FAILED", error_summary: "PRODUCT_NOT_FOUND 40" }), "NO_MATCH");
+  assert.equal(jobOutcome({ status: "FAILED", error_summary: "KEYWORD_NOT_FOUND 49" }), "NO_MATCH");
+  assert.equal(jobOutcome({ status: "FAILED", error_summary: "전체 롤백 (저장된 데이터 없음): P0001 x" }), "FAILED");
+  assert.equal(jobOutcome({ status: "FAILED", error_summary: "INVALID 1" }), "FAILED");
+  assert.equal(jobOutcome({ status: "ROLLED_BACK" }), "ROLLED_BACK");
+});
+test("Phase12", "등록 여부 요청: 숫자 ID · 300개 제한 · 키워드 1~100자 · 중복 제거", () => {
+  assert.deepEqual(parseLookupRequest({ keyword: " 캠핑  의자 ", coupangProductIds: ["1", "1", "2"] }), { ok: true, keyword: "캠핑 의자", coupangProductIds: ["1", "2"] });
+  assert.equal(parseLookupRequest({ coupangProductIds: ["abc"] }).ok, false);
+  assert.equal(parseLookupRequest({ coupangProductIds: Array.from({ length: 301 }, (_, i) => String(i)) }).status, 413);
+  assert.equal(parseLookupRequest({ keyword: "", coupangProductIds: [] }).ok, false);
+  assert.equal(parseLookupRequest(null).ok, false);
+});
+const regBody = (over = {}) => ({
+  idempotencyKey: KEY,
+  tool: "jarvis-extension",
+  version: "0.1.0",
+  records: [{ kind: "search", ...p12() }],
+  products: [{ coupangProductId: "1003", productName: " 자연2 " }],
+  ...over,
+});
+test("Phase12", "선택 상품 등록 요청: 고른 상품만 · 검색 결과 밖 상품 거부 · 키워드는 검색어와 같아야 · 100개 제한", () => {
+  const ok = parseRegisterRequest(regBody({ registerKeyword: "캠핑의자" }));
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.request.products, [{ coupang_product_id: "1003", product_name: "자연2" }]);
+  assert.deepEqual(ok.request.keyword, { keyword: "캠핑의자", memo: null });
+  assert.match(parseRegisterRequest(regBody({ products: [{ coupangProductId: "9999" }] })).error, /검색 결과에 없습니다/);
+  assert.match(parseRegisterRequest(regBody({ products: [] })).error, /선택한 상품이 없습니다/);
+  assert.match(parseRegisterRequest(regBody({ registerKeyword: "다른검색어" })).error, /검색어와 다릅니다/);
+  assert.match(parseRegisterRequest(regBody({ records: [{ kind: "product", ...adaptProductPage(KOMET_RAW, META) }] })).error, /검색 결과에 없습니다/);
+  assert.equal(parseRegisterRequest(regBody({ products: Array.from({ length: 101 }, (_, i) => ({ coupangProductId: String(1000 + i) })) })).status, 413);
+  assert.equal(parseRegisterRequest(regBody({ idempotencyKey: "x" })).ok, false);
 });
 
 let failed = 0;

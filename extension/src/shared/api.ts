@@ -8,7 +8,7 @@
 
 import { EXT_TOOL, EXT_VERSION, JARVIS_API_BASE, SUPABASE_ANON_KEY, SUPABASE_URL } from "./constants";
 import { getSession, setSession, type StoredSession } from "./storage";
-import type { IngestRecord, IngestResult } from "./types";
+import type { IngestRecord, IngestResult, LookupResult, RegisterInput, RegisterResult } from "./types";
 
 interface TokenResponse {
   access_token: string;
@@ -78,9 +78,11 @@ export async function validSession(): Promise<StoredSession | null> {
 }
 
 /** 개발 빌드 전용 시험: 본문 문자열을 그대로 보낸다 (로그인 토큰 · 확장 프로그램 origin 은 실제와 같다) */
-export async function sendRaw(body: string): Promise<{ status: number; json: unknown }> {
+const DEV_PATHS = ["/api/ingest", "/api/extension/lookup", "/api/extension/register"];
+export async function sendRaw(body: string, path = "/api/ingest"): Promise<{ status: number; json: unknown }> {
+  if (!DEV_PATHS.includes(path)) return { status: 0, json: { error: "허용되지 않은 경로" } };
   const session = await validSession();
-  const res = await fetch(`${JARVIS_API_BASE}/api/ingest`, {
+  const res = await fetch(`${JARVIS_API_BASE}${path}`, {
     method: "POST",
     headers: { ...(session && { Authorization: `Bearer ${session.accessToken}` }), "Content-Type": "application/json" },
     body,
@@ -88,19 +90,16 @@ export async function sendRaw(body: string): Promise<{ status: number; json: unk
   return { status: res.status, json: await res.json().catch(() => null) };
 }
 
-/** 수집 레코드 전송. 네트워크 오류면 같은 idempotencyKey 로 한 번 더 보낸다 (서버는 replay 로 처리) */
-export async function sendRecords(records: IngestRecord[]): Promise<IngestResult> {
+/** JARVIS API 호출. 네트워크 오류면 같은 본문(같은 idempotencyKey)으로 한 번 더 보낸다 (서버는 replay 로 처리) */
+async function postApi<T extends { ok?: boolean; error?: string }>(path: string, body: string): Promise<T & { ok: boolean; error?: string; httpStatus?: number }> {
   const session = await validSession();
-  if (!session) return { ok: false, error: "JARVIS 에 로그인하지 않았습니다. 팝업에서 로그인하세요.", httpStatus: 401 };
-
-  const body = JSON.stringify({ idempotencyKey: crypto.randomUUID(), tool: EXT_TOOL, version: EXT_VERSION, records });
+  if (!session) return { ok: false, error: "JARVIS 에 로그인하지 않았습니다. 팝업에서 로그인하세요.", httpStatus: 401 } as unknown as T & { ok: boolean };
   const send = () =>
-    fetch(`${JARVIS_API_BASE}/api/ingest`, {
+    fetch(`${JARVIS_API_BASE}${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session.accessToken}`, "Content-Type": "application/json" },
       body,
     });
-
   let res: Response;
   try {
     res = await send();
@@ -108,10 +107,28 @@ export async function sendRecords(records: IngestRecord[]): Promise<IngestResult
     try {
       res = await send();
     } catch {
-      return { ok: false, error: `JARVIS 서버(${JARVIS_API_BASE})에 연결할 수 없습니다. 서버가 켜져 있는지 확인하세요.` };
+      return { ok: false, error: `JARVIS 서버(${JARVIS_API_BASE})에 연결할 수 없습니다. 서버가 켜져 있는지 확인하세요.` } as unknown as T & { ok: boolean };
     }
   }
-  const data = (await res.json().catch(() => ({}))) as IngestResult;
+  const data = (await res.json().catch(() => ({}))) as T;
   if (res.status === 401) await setSession(null);
   return { ...data, ok: res.ok && data.ok !== false, httpStatus: res.status };
+}
+
+/** 수집 레코드 전송 (/api/ingest) */
+export function sendRecords(records: IngestRecord[]): Promise<IngestResult> {
+  return postApi<IngestResult>("/api/ingest", JSON.stringify({ idempotencyKey: crypto.randomUUID(), tool: EXT_TOOL, version: EXT_VERSION, records }));
+}
+
+/** 검색 결과 상품 · 키워드 등록 여부 (/api/extension/lookup, 읽기 전용) */
+export function lookup(keyword: string | null, coupangProductIds: string[]): Promise<LookupResult> {
+  return postApi<LookupResult>("/api/extension/lookup", JSON.stringify({ keyword, coupangProductIds }));
+}
+
+/** 선택 상품 등록 + 저장 (/api/extension/register). 요청 1번 = idempotencyKey 1개 */
+export function registerSelected(input: RegisterInput): Promise<RegisterResult> {
+  return postApi<RegisterResult>(
+    "/api/extension/register",
+    JSON.stringify({ idempotencyKey: crypto.randomUUID(), tool: EXT_TOOL, version: EXT_VERSION, ...input }),
+  );
 }

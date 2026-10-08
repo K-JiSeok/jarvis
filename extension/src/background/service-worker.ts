@@ -4,7 +4,7 @@
  * 다른 탭 이동 · 다음 페이지 · 자동 수집은 하지 않는다 — 사용자가 누른 버튼 1번 = 전송 1번.
  */
 
-import { login, logout, sendRaw, sendRecords, validSession } from "../shared/api";
+import { login, logout, lookup, registerSelected, sendRaw, sendRecords, validSession } from "../shared/api";
 import { JARVIS_API_BASE, JARVIS_DEV } from "../shared/constants";
 import { getLastRun, setLastRun } from "../shared/storage";
 import type { LastRun, Message } from "../shared/types";
@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
 
   (async () => {
     // 개발 빌드 전용 시험 경로 (배포 빌드에서는 JARVIS_DEV = false 라 코드째 빠진다)
-    if (JARVIS_DEV && message.type === "jarvis:dev-raw") return sendRaw(message.body);
+    if (JARVIS_DEV && message.type === "jarvis:dev-raw") return sendRaw(message.body, message.path);
     switch (message.type) {
       case "jarvis:status": {
         const session = await validSession();
@@ -37,6 +37,20 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
         const run: LastRun = { at: new Date().toISOString(), pageType: collect.pageType, counts: collect.counts, summary: collect.summary, result };
         await setLastRun(run);
         return run;
+      }
+      case "jarvis:lookup":
+        return lookup(message.keyword, message.coupangProductIds);
+      case "jarvis:register": {
+        const result = await registerSelected(message.input);
+        const run: LastRun = {
+          at: new Date().toISOString(),
+          pageType: "search",
+          counts: message.counts,
+          summary: message.summary,
+          result: { ...result, registered: { selected: result.selected ?? message.input.products.length, created: result.createdProducts ?? 0, existing: result.existingProducts ?? 0 } },
+        };
+        await setLastRun(run);
+        return result;
       }
       default:
         return { ok: false, error: "알 수 없는 요청" };

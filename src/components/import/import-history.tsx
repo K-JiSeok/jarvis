@@ -2,20 +2,32 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { displayCell, IMPORT_TYPE_LABELS, type ImportType } from "@/lib/import/core";
+import { jobOutcome, OUTCOME_LABELS, type JobOutcome } from "@/lib/ingest/outcome";
 import type { ImportRowView, JobSummary } from "@/lib/repositories/imports";
 import { cn } from "@/lib/utils";
 import { SOURCE_TYPE_LABELS, type SourceType } from "@/types/common";
 
 import { RollbackButton } from "./rollback-button";
 
-const STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-  SUCCEEDED: { label: "성공", variant: "secondary" },
-  PARTIAL: { label: "부분 성공", variant: "outline" },
-  FAILED: { label: "실패", variant: "destructive" },
-  PROCESSING: { label: "처리 중", variant: "outline" },
-  PENDING: { label: "대기", variant: "outline" },
-  ROLLED_BACK: { label: "되돌림", variant: "outline" },
+/** 결과 상태 (import_jobs.status + 실패 사유로 나눔 — src/lib/ingest/outcome.ts). 미등록 상품 · 키워드 때문에 빠진 행은 오류가 아니다 */
+const OUTCOME_VARIANT: Record<JobOutcome, "default" | "secondary" | "destructive" | "outline"> = {
+  COMPLETED: "secondary",
+  PARTIAL: "outline",
+  PARTIAL_ERROR: "outline",
+  NO_MATCH: "outline",
+  FAILED: "destructive",
+  PROCESSING: "outline",
+  ROLLED_BACK: "outline",
 };
+
+function StatusBadge({ job }: { job: JobSummary }) {
+  const o = jobOutcome({ status: job.status, failed_rows: job.failedRows, error_summary: job.errorSummary });
+  return (
+    <Badge variant={OUTCOME_VARIANT[o]} title={`DB 상태 ${job.status}`}>
+      {OUTCOME_LABELS[o]}
+    </Badge>
+  );
+}
 
 const RESULT: Record<string, { label: string; cls: string }> = {
   INSERTED: { label: "추가", cls: "text-emerald-700 dark:text-emerald-300" },
@@ -62,7 +74,7 @@ export function ImportHistory({ jobs, selectedId }: { jobs: JobSummary[]; select
                 {sourceLabel(j.sourceType)} · {j.confidence ?? "-"}
               </td>
               <td className="py-2">
-                <Badge variant={STATUS[j.status]?.variant ?? "outline"}>{STATUS[j.status]?.label ?? j.status}</Badge>
+                <StatusBadge job={j} />
               </td>
               <td className="py-2 text-right">{j.totalRows}</td>
               <td className="py-2 text-right text-emerald-700 dark:text-emerald-300">{j.insertedRows + j.updatedRows}</td>
@@ -83,7 +95,7 @@ export function ImportJobDetail({ job, rows }: { job: JobSummary; rows: ImportRo
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <strong>{jobName(job)}</strong>
-        <Badge variant={STATUS[job.status]?.variant ?? "outline"}>{STATUS[job.status]?.label ?? job.status}</Badge>
+        <StatusBadge job={job} />
         <span className="text-muted-foreground tabular-nums">
           {typeLabel(job.importType)} · {sourceLabel(job.sourceType)} · 신뢰도 {job.confidence ?? "-"} · 추가 {job.insertedRows} · 갱신 {job.updatedRows} · 건너뜀 {job.skippedRows} ·
           실패 {job.failedRows}

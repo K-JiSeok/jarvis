@@ -14,7 +14,28 @@ export interface PageCollector {
   detect(): DetectResponse;
   /** 화면을 읽어 레코드를 만든다 (전송하지 않음) */
   read(): { records: IngestRecord[]; summary: string[] } | { error: string };
+  /** 버튼 1번의 전체 흐름 (기본: 읽기 → 전송). 검색 결과는 등록 여부 확인 → 저장 → 후보 표시 (PHASE 12) */
+  run?(): Promise<LastRun>;
+  /** 페이지 위 패널을 직접 그리면 기본 작은 버튼을 만들지 않는다 */
+  mountPanel?(): void;
 }
+
+/** 기본 흐름: 화면 읽기 → /api/ingest */
+export async function runCollector(collector: PageCollector): Promise<LastRun> {
+  if (collector.run) return collector.run();
+  const c = collect(collector);
+  if (!c.ok) return { at: new Date().toISOString(), pageType: collector.pageType, counts: c.counts, summary: c.summary, result: { ok: false, error: c.error } };
+  return (await chrome.runtime.sendMessage({ type: "jarvis:ingest", collect: c } satisfies Message)) as LastRun;
+}
+
+/** 결과 상태 이름 (서버 outcome — src/lib/ingest/outcome.ts 와 같은 이름) */
+export const OUTCOME_LABELS: Record<string, string> = {
+  COMPLETED: "완료",
+  PARTIAL: "일부 미등록",
+  PARTIAL_ERROR: "부분 성공 (오류 있음)",
+  NO_MATCH: "등록 상품 없음",
+  FAILED: "실패",
+};
 
 export function collect(collector: PageCollector): CollectResponse {
   const capturedSummary: string[] = [];
@@ -43,7 +64,8 @@ export function resultLine(run: LastRun): string {
   const fails = Object.entries(r.failures ?? {})
     .map(([k, v]) => `${k} ${v}`)
     .join(", ");
-  return `${r.replay ? "이미 보낸 수집(재전송)" : "수집 완료"} · 전체 ${r.total} · 추가 ${r.inserted} · 갱신 ${r.updated} · 건너뜀 ${r.skipped} · 실패 ${r.failed}${fails ? ` (${fails})` : ""}`;
+  const label = r.replay ? "이미 보낸 수집(재전송)" : `수집 완료${r.outcome ? ` [${OUTCOME_LABELS[r.outcome] ?? r.outcome}]` : ""}`;
+  return `${label} · 전체 ${r.total} · 추가 ${r.inserted} · 갱신 ${r.updated} · 건너뜀 ${r.skipped} · 실패 ${r.failed}${fails ? ` (${fails})` : ""}`;
 }
 
 /** 확장 프로그램 메시지 처리 + 페이지 위 작은 버튼 */
@@ -52,10 +74,14 @@ export function start(collector: PageCollector) {
     if (sender.id !== chrome.runtime.id) return false;
     if (message.type === "jarvis:detect") sendResponse(collector.detect());
     else if (message.type === "jarvis:collect") sendResponse(collect(collector));
-    else return false;
+    else if (message.type === "jarvis:run") {
+      void runCollector(collector).then(sendResponse);
+      return true;
+    } else return false;
     return false;
   });
-  mountPanel(collector);
+  if (collector.mountPanel) collector.mountPanel();
+  else mountPanel(collector);
   /*
    * 개발 빌드 전용 시험 경로: 페이지에서 window.postMessage({ jarvisDev: "collect" | "ingest" | "raw", id, body? }) →
    * 결과를 window.postMessage({ jarvisDevResult: id, … }) 로 돌려준다. 배포 빌드에서는 JARVIS_DEV = false 라 이 블록이 통째로 빠진다.
@@ -63,10 +89,10 @@ export function start(collector: PageCollector) {
   if (JARVIS_DEV) {
     window.addEventListener("message", async (e) => {
       if (e.source !== window || !e.data || typeof e.data.jarvisDev !== "string") return;
-      const { jarvisDev, id, body } = e.data as { jarvisDev: string; id: string; body?: string };
+      const { jarvisDev, id, body, path } = e.data as { jarvisDev: string; id: string; body?: string; path?: string };
       let result: unknown;
       if (jarvisDev === "collect") result = collect(collector);
-      else if (jarvisDev === "raw" && typeof body === "string") result = await chrome.runtime.sendMessage({ type: "jarvis:dev-raw", body } satisfies Message);
+      else if (jarvisDev === "raw" && typeof body === "string") result = await chrome.runtime.sendMessage({ type: "jarvis:dev-raw", body, path } satisfies Message);
       else if (jarvisDev === "ingest") {
         const c = collect(collector);
         result = c.ok ? await chrome.runtime.sendMessage({ type: "jarvis:ingest", collect: c } satisfies Message) : c;
@@ -74,6 +100,20 @@ export function start(collector: PageCollector) {
       window.postMessage({ jarvisDevResult: id, result }, location.origin);
     });
   }
+}
+
+/**
+ * 패널을 페이지에 붙이고, 쿠팡이 화면을 다시 그리며 떼어 내면 다시 붙인다 (PHASE 12 실사용: 검색 결과 화면이 뜬 직후 html 아래 낯선 노드를 지움).
+ * 같은 요소를 다시 붙이므로 패널 상태(체크한 상품 등)는 그대로다.
+ */
+export function keepAttached(host: HTMLElement) {
+  const attach = () => {
+    if (!host.isConnected) (document.body ?? document.documentElement).appendChild(host);
+  };
+  attach();
+  new MutationObserver(attach).observe(document.documentElement, { childList: true, subtree: false });
+  if (document.body) new MutationObserver(attach).observe(document.body, { childList: true });
+  window.setInterval(attach, 1000);
 }
 
 function mountPanel(collector: PageCollector) {
@@ -91,7 +131,7 @@ function mountPanel(collector: PageCollector) {
       .muted{color:#9ca3af}
     </style>
     <div class="box"><button id="jarvis-collect" type="button">JARVIS 수집</button><div class="msg muted" id="jarvis-msg"></div></div>`;
-  document.documentElement.appendChild(host);
+  keepAttached(host);
 
   const button = root.getElementById("jarvis-collect") as HTMLButtonElement;
   const msg = root.getElementById("jarvis-msg") as HTMLDivElement;
@@ -115,17 +155,9 @@ function mountPanel(collector: PageCollector) {
     busy = true;
     shownResult = true;
     button.disabled = true;
-    msg.textContent = "수집 중…";
-    const c = collect(collector);
-    if (!c.ok) {
-      msg.textContent = `오류: ${c.error}`;
-      busy = false;
-      button.disabled = false;
-      return;
-    }
-    msg.textContent = `전송 중… (상품 ${c.counts.products} · 순위 ${c.counts.ranks} · 키워드 ${c.counts.keywords})`;
+    msg.textContent = "수집 · 전송 중…";
     try {
-      const run = (await chrome.runtime.sendMessage({ type: "jarvis:ingest", collect: c } satisfies Message)) as LastRun;
+      const run = await runCollector(collector);
       msg.textContent = `${resultLine(run)}${run.result.jobId ? `\nJob ${run.result.jobId.slice(0, 8)}` : ""}`;
       msg.dataset.state = run.result.ok ? "done" : "error";
       msg.dataset.jobId = run.result.jobId ?? "";

@@ -33,6 +33,8 @@ function readItem(li: Element): RawCoupangSearchItem {
     rankBadgeText: text(li.querySelector('[class*="RankMark_rank"]')) || null,
     productName: text(li.querySelector('[class*="productName"]')) || null,
     priceText: price.priceText,
+    originalPriceText: price.originalPriceText,
+    discountText: price.discountText,
     reviewCountText: reviewText ?? null,
     ratingText: rating?.getAttribute("aria-label") ?? null,
     badgeImageNames: [...li.querySelectorAll("img")].map(imageName).filter((n) => /^logo_rocket/i.test(n)),

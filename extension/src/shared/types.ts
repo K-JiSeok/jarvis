@@ -58,8 +58,60 @@ export interface IngestResult {
   notFound?: { coupangProductId: string | null; productName: string | null; rank: number | null; isAd: boolean | null }[];
   issues?: NormalizeIssue[];
   jarvisPath?: string;
+  /** PHASE 12 결과 상태: COMPLETED · PARTIAL · PARTIAL_ERROR · NO_MATCH · FAILED */
+  outcome?: string;
+  /** PHASE 12 선택 상품 등록 결과 */
+  registered?: { selected: number; created: number; existing: number };
+  rolledBack?: boolean;
+  detail?: string;
   error?: string;
   httpStatus?: number;
+}
+
+/** /api/extension/lookup 응답 */
+export interface LookupResult {
+  ok: boolean;
+  error?: string;
+  httpStatus?: number;
+  keyword: { keyword: string; registered: boolean; id: string | null } | null;
+  registered: { coupangProductId: string; productId: string; productName: string }[];
+}
+
+/** /api/extension/register 요청 (idempotencyKey · tool · version 은 api.ts 가 붙인다) */
+export interface RegisterInput {
+  records: IngestRecord[];
+  products: { coupangProductId: string; productName: string | null }[];
+  registerKeyword?: string | null;
+}
+
+export interface KindCounts {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}
+
+/** /api/extension/register 응답 */
+export interface RegisterResult {
+  ok: boolean;
+  error?: string;
+  detail?: string;
+  httpStatus?: number;
+  rolledBack?: boolean;
+  replay?: boolean;
+  jobId?: string | null;
+  outcome?: string;
+  selected?: number;
+  createdProducts?: number;
+  existingProducts?: number;
+  keywordCreated?: boolean;
+  kinds?: Record<"rank" | "product" | "keyword", KindCounts>;
+  total?: number;
+  inserted?: number;
+  updated?: number;
+  skipped?: number;
+  failed?: number;
+  jarvisPath?: string;
 }
 
 export interface LastRun {
@@ -78,4 +130,8 @@ export type Message =
   | { type: "jarvis:login"; email: string; password: string }
   | { type: "jarvis:logout" }
   /** 개발 빌드 전용: 본문을 그대로 /api/ingest 로 (잘못된 요청 · 재전송 시험) */
-  | { type: "jarvis:dev-raw"; body: string };
+  | { type: "jarvis:dev-raw"; body: string; path?: string }
+  /** 콘텐츠 스크립트: 이 페이지의 전체 흐름 실행 (검색 = 등록 여부 확인 → 저장 → 후보 표시) */
+  | { type: "jarvis:run" }
+  | { type: "jarvis:lookup"; keyword: string | null; coupangProductIds: string[] }
+  | { type: "jarvis:register"; input: RegisterInput; counts: CollectCounts; summary: string[] };

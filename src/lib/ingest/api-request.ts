@@ -104,3 +104,81 @@ export class RateLimiter {
     return 0;
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// PHASE 12: 확장 프로그램 검색 결과 → 등록 여부 확인 · 선택 상품 등록
+// ---------------------------------------------------------------------------------------------
+
+/** 등록 여부 확인 1회 최대 상품 수 (검색 1페이지 60칸 · 중복 제외면 충분) */
+export const MAX_LOOKUP_IDS = 300;
+/** 선택 상품 등록 1회 최대 상품 수 (DB 함수 한도와 같음) */
+export const MAX_REGISTER_PRODUCTS = 100;
+
+const PRODUCT_ID = /^\d{1,20}$/;
+const cleanKeyword = (v: unknown) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "");
+
+export type LookupParse = { ok: true; keyword: string | null; coupangProductIds: string[] } | { ok: false; status: number; error: string };
+
+export function parseLookupRequest(body: unknown): LookupParse {
+  if (!isObject(body)) return { ok: false, status: 400, error: "JSON 객체가 필요합니다." };
+  const keyword = body.keyword == null ? null : cleanKeyword(body.keyword);
+  if (keyword !== null && (keyword.length === 0 || keyword.length > 100)) return { ok: false, status: 400, error: "keyword 는 1~100자입니다." };
+  const ids = body.coupangProductIds;
+  if (!Array.isArray(ids)) return { ok: false, status: 400, error: "coupangProductIds 배열이 필요합니다." };
+  if (ids.length > MAX_LOOKUP_IDS) return { ok: false, status: 413, error: `coupangProductIds 는 최대 ${MAX_LOOKUP_IDS}개입니다.` };
+  if (!ids.every((id) => typeof id === "string" && PRODUCT_ID.test(id))) return { ok: false, status: 400, error: "쿠팡 상품 ID 는 숫자 문자열이어야 합니다." };
+  return { ok: true, keyword, coupangProductIds: [...new Set(ids as string[])] };
+}
+
+export interface RegisterRequest {
+  batch: IngestRequestBatch;
+  /** 사용자가 고른 상품 (이 목록만 products 에 만든다) */
+  products: { coupang_product_id: string; product_name: string | null }[];
+  /** 사용자가 [키워드도 등록] 을 고른 경우만 */
+  keyword: { keyword: string; memo: string | null } | null;
+}
+
+export type RegisterParse = { ok: true; request: RegisterRequest } | { ok: false; status: number; error: string };
+
+/**
+ * 선택 상품 등록 요청. records 는 /api/ingest 와 같은 형식 · 같은 검사 (parseIngestRequest).
+ * 자동 등록 방지: products 는 사용자가 고른 목록이어야 하고, 그 상품들은 보내는 검색 결과(records) 안에 있어야 한다.
+ */
+export function parseRegisterRequest(body: unknown, now = Date.now()): RegisterParse {
+  if (!isObject(body)) return { ok: false, status: 400, error: "JSON 객체가 필요합니다." };
+  const base = parseIngestRequest({ idempotencyKey: body.idempotencyKey, tool: body.tool, version: body.version, records: body.records }, now);
+  if (!base.ok) return base;
+  const products = body.products;
+  if (!Array.isArray(products) || products.length === 0) return { ok: false, status: 400, error: "선택한 상품이 없습니다." };
+  if (products.length > MAX_REGISTER_PRODUCTS) return { ok: false, status: 413, error: `한 번에 최대 ${MAX_REGISTER_PRODUCTS}개까지 등록합니다.` };
+  const out: RegisterRequest["products"] = [];
+  const seen = new Set<string>();
+  for (const [i, p] of products.entries()) {
+    if (!isObject(p) || typeof p.coupangProductId !== "string" || !PRODUCT_ID.test(p.coupangProductId)) {
+      return { ok: false, status: 400, error: `products[${i}].coupangProductId 가 올바르지 않습니다.` };
+    }
+    if (seen.has(p.coupangProductId)) continue;
+    seen.add(p.coupangProductId);
+    const name = typeof p.productName === "string" ? p.productName.trim().replace(/\s+/g, " ").slice(0, 300) : "";
+    out.push({ coupang_product_id: p.coupangProductId, product_name: name || null });
+  }
+  // 고른 상품은 이번 검색 결과에 있는 상품이어야 한다 (화면에 없던 상품을 몰래 만들지 않음)
+  const inSearch = new Set(
+    base.batch.searches.flatMap((s) => (s.items ?? []).map((it) => it.coupangProductId ?? it.productUrl?.match(/\/products\/(\d+)/)?.[1] ?? null)),
+  );
+  const outside = out.filter((p) => !inSearch.has(p.coupang_product_id));
+  if (base.batch.searches.length === 0 || outside.length > 0) {
+    return { ok: false, status: 400, error: `선택한 상품이 보낸 검색 결과에 없습니다 (${outside.map((p) => p.coupang_product_id).slice(0, 3).join(", ")}).` };
+  }
+  let keyword: RegisterRequest["keyword"] = null;
+  if (body.registerKeyword != null) {
+    const k = cleanKeyword(body.registerKeyword);
+    if (!k || k.length > 100) return { ok: false, status: 400, error: "registerKeyword 는 1~100자입니다." };
+    // 등록할 키워드는 이번 검색어여야 한다
+    if (!base.batch.searches.some((s) => cleanKeyword(s.keyword).toLowerCase() === k.toLowerCase())) {
+      return { ok: false, status: 400, error: "registerKeyword 가 검색어와 다릅니다." };
+    }
+    keyword = { keyword: k, memo: null };
+  }
+  return { ok: true, request: { batch: base.batch, products: out, keyword } };
+}

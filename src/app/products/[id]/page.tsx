@@ -18,6 +18,7 @@ import { ProductSnapshotForm } from "@/components/products/product-snapshot-form
 import { ProductSnapshotHistory } from "@/components/products/product-snapshot-history";
 import { RankForm } from "@/components/products/rank-form";
 import { RankHistory } from "@/components/products/rank-history";
+import { SearchExposure } from "@/components/products/search-exposure";
 import {
   WatchlistEvents,
   WatchlistReleaseButton,
@@ -236,6 +237,18 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>검색 노출</CardTitle>
+          <CardDescription>
+            키워드마다 가장 최근 순위와 그날 쿠팡 화면 값 (확장 프로그램 수집 · 직접 입력). 같은 검색 결과의 다른 등록 상품은 아래 &quot;경쟁상품 후보&quot;에서 직접 골라 연결합니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SearchExposure ranks={product.ranks} snapshots={product.snapshots} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

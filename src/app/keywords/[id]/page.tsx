@@ -7,6 +7,7 @@ import { DataPointValue } from "@/components/common/data-point-value";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { KeywordSettingsForm } from "@/components/keywords/keyword-settings-form";
+import { SearchObservations } from "@/components/keywords/search-observations";
 import { SnapshotForm } from "@/components/keywords/snapshot-form";
 import { SnapshotHistory } from "@/components/keywords/snapshot-history";
 import { RankHistory } from "@/components/products/rank-history";
@@ -16,6 +17,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { formatDecimal, formatNumber, formatPercent, formatShortDate, formatSignedPercent, formatWon } from "@/lib/format";
 import { getKeywordDetail, listCategories } from "@/lib/repositories/keywords";
 import { listRanksForKeyword } from "@/lib/repositories/ranks";
+import { listSearchObservations } from "@/lib/repositories/search-observations";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import type { DataPoint } from "@/types/common";
 import type { KeywordMetrics } from "@/types/keyword";
@@ -56,6 +58,7 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
   const [keyword, categories, ranks] = await Promise.all([getKeywordDetail(id), listCategories(), listRanksForKeyword(id)]);
   // RLS: 다른 사용자의 키워드는 조회되지 않으므로 존재하지 않는 것과 같다
   if (!keyword) notFound();
+  const observations = await listSearchObservations(keyword.keyword);
 
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 
@@ -121,8 +124,21 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
 
       <Card>
         <CardHeader>
+          <CardTitle>쿠팡 검색 결과 수집</CardTitle>
+          <CardDescription>
+            확장 프로그램으로 수집한 검색 결과 1페이지. 등록 상품은 순위 · 상품 데이터가 저장되고, 미등록 상품은 화면 값만 수집 기록에 남습니다 (확장 프로그램에서
+            골라 등록할 수 있음).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SearchObservations observations={observations} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>이 키워드의 상품 순위</CardTitle>
-          <CardDescription>상품 상세 화면에서 입력한 검색 순위 (최신 수집일 → 자연 노출 → 순위 순). 상품은 복제되지 않고 연결만 됩니다.</CardDescription>
+          <CardDescription>저장된 검색 순위 — 직접 입력 · 확장 프로그램 수집 (최신 수집일 → 자연 노출 → 순위 순). 상품은 복제되지 않고 연결만 됩니다.</CardDescription>
         </CardHeader>
         <CardContent>
           <RankHistory ranks={ranks} mode="keyword" />
