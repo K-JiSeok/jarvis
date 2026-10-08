@@ -12,6 +12,7 @@ import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { deliveryLabel, sellerLabel, withPeriod } from "@/components/products/labels";
 import { ProfitWorkspace } from "@/components/profit/profit-workspace";
+import { ScoreCard } from "@/components/score/score-card";
 import { ProductEditForm } from "@/components/products/product-edit-form";
 import { ProductSnapshotForm } from "@/components/products/product-snapshot-form";
 import { ProductSnapshotHistory } from "@/components/products/product-snapshot-history";
@@ -31,6 +32,7 @@ import { formatNumber, formatPercent, formatShortDate, formatWon } from "@/lib/f
 import { getCompetitorCandidates, getCompetitorReferences, getCompetitorsForProduct } from "@/lib/repositories/competitors";
 import { listCategories, listKeywordOptions } from "@/lib/repositories/keywords";
 import { getProductDetail, kstToday } from "@/lib/repositories/products";
+import { getCurrentScore, listActiveRisks, listScoreHistory, listScoreKeywordOptions, previewScore } from "@/lib/repositories/opportunity";
 import { getProfitProductContext, listScenariosForProduct } from "@/lib/repositories/profit";
 import { getWatchlistForProduct, listWatchlistEvents } from "@/lib/repositories/watchlist";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
@@ -67,7 +69,7 @@ const METRICS: Metric[] = [
 
 export default async function ProductDetailPage({ params, searchParams }: PageProps<"/products/[id]">) {
   const { id } = await params;
-  const { scenario } = await searchParams;
+  const { scenario, score_kw: scoreKw } = await searchParams;
   const scenarioId = typeof scenario === "string" && UUID.test(scenario) ? scenario : null;
   const user = await getCurrentUser();
   if (!user) {
@@ -94,6 +96,18 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
   // RLS: 다른 사용자의 상품은 조회되지 않으므로 존재하지 않는 것과 같다
   if (!product) notFound();
   const events = watch ? await listWatchlistEvents(watch.id) : [];
+
+  // 점수 맥락 키워드: ?score_kw= (none = 키워드 없음) → 없으면 연결된 첫 키워드 (관심상품 발견 → 검색 순위 → 경쟁관계)
+  const keywordOptions = await listScoreKeywordOptions(id);
+  const requested = typeof scoreKw === "string" ? scoreKw : null;
+  const scoreKeywordId =
+    requested === "none" ? null : (keywordOptions.find((k) => k.id === requested) ?? keywordOptions[0])?.id ?? null;
+  const [scorePreview, savedScore, scoreHistory, risks] = await Promise.all([
+    previewScore(id, scoreKeywordId),
+    getCurrentScore(id, scoreKeywordId),
+    listScoreHistory(id),
+    listActiveRisks(id),
+  ]);
   const today = kstToday();
 
   return (
@@ -181,6 +195,28 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
           </Card>
         </div>
       </div>
+
+      <Card id="score">
+        <CardHeader>
+          <CardTitle>Opportunity Score</CardTitle>
+          <CardDescription>
+            이 상품이 판매 후보로 얼마나 좋은가 (100점 만점, Scoring v1 가중치 고정). 수집된 실제 데이터만 사용하고, 없는 데이터는 추정하지 않습니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {scorePreview && (
+            <ScoreCard
+              productId={product.id}
+              saved={savedScore}
+              preview={scorePreview.result}
+              keywordOptions={keywordOptions}
+              keywordId={scoreKeywordId}
+              risks={risks}
+              history={scoreHistory}
+            />
+          )}
+        </CardContent>
+      </Card>
 
       {profitContext && (
         <Card id="profit">

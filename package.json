@@ -10,7 +10,8 @@
     "db:verify": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/db/verify.mjs",
     "db:types:local": "node scripts/db/gen-types.mjs",
     "db:types": "npx supabase gen types typescript --project-id ogfldnhumdqawcbunehl --schema public > src/types/database.ts",
-    "test:profit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/profit/test.mjs"
+    "test:profit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/profit/test.mjs",
+    "test:score": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/scoring/test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -1,24 +1,27 @@
 import Link from "next/link";
 
 import { DataPointValue } from "@/components/common/data-point-value";
+import { VerdictBadge } from "@/components/common/score-badge";
 import { SourceBadge } from "@/components/common/source-badge";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber, formatShortDate, formatWon } from "@/lib/format";
 import { LIFECYCLE_LABELS, type ProductSummary } from "@/types/product";
+import type { SavedScoreView } from "@/types/score";
 
 import { deliveryLabel } from "./labels";
 
-export function ProductsTable({ products }: { products: ProductSummary[] }) {
+export function ProductsTable({ products, scores }: { products: ProductSummary[]; scores?: Map<string, SavedScoreView> }) {
   if (products.length === 0) {
     return <p className="text-muted-foreground py-6 text-center text-sm">표시할 상품이 없습니다.</p>;
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1040px] text-sm">
+      <table className="w-full min-w-[1140px] text-sm">
         <thead>
           <tr className="text-muted-foreground border-b text-left text-xs">
             <th className="py-2 pr-3 font-medium">상품</th>
+            <th className="py-2 pr-3 font-medium">점수</th>
             <th className="py-2 pr-3 font-medium">카테고리</th>
             <th className="py-2 pr-3 text-right font-medium">가격</th>
             <th className="py-2 pr-3 text-right font-medium">리뷰</th>
@@ -40,6 +43,9 @@ export function ProductsTable({ products }: { products: ProductSummary[] }) {
                 <span className="text-muted-foreground text-xs">
                   {p.brand ?? "브랜드 -"} · ID {p.coupangProductId}
                 </span>
+              </td>
+              <td className="py-2.5 pr-3">
+                <ScoreCell score={scores?.get(p.id) ?? null} />
               </td>
               <td className="text-muted-foreground py-2.5 pr-3 text-xs">{p.category?.path ?? p.category?.name ?? "-"}</td>
               <td className="py-2.5 pr-3 text-right">
@@ -82,5 +88,16 @@ export function ProductsTable({ products }: { products: ProductSummary[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** 저장된 현재 점수 (없으면 미계산 — 데이터 부족이거나 아직 계산하지 않음) */
+function ScoreCell({ score }: { score: SavedScoreView | null }) {
+  if (!score) return <span className="text-muted-foreground text-xs">미계산</span>;
+  return (
+    <span className="inline-flex flex-col items-start gap-1" title={`${score.scoringVersion} · ${formatShortDate(score.calculatedAt)} 계산`}>
+      <span className="text-base leading-none font-bold tabular-nums">{Math.round(score.total * 100) / 100}</span>
+      <VerdictBadge verdict={score.verdict} />
+    </span>
   );
 }

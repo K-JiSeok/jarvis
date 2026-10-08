@@ -986,6 +986,88 @@ select pg_temp.jv_expect_error('PF09 카테고리 수수료율 0~1 범위 밖 �
   format($q$update public.categories set coupang_fee_rate = -0.1 where id = '%s'$q$, pg_temp.jv('cat')), '23514');
 
 -- ===========================================================================
+-- SC. Opportunity Score 저장 흐름 (PHASE 7 엔진이 쓰는 형태)
+-- ===========================================================================
+do $$
+declare
+  v_s1 uuid;
+  v_calc uuid;
+  v_kw uuid;
+  v_refs jsonb;
+begin
+  select id into v_calc from public.profit_calculations where product_id = pg_temp.jv('p3') and is_current limit 1;
+  select id into v_kw from public.keywords where id = pg_temp.jv('kw');
+  v_refs := jsonb_build_object(
+    'engine', 'score-engine-v1', 'keyword_id', v_kw,
+    'profit_scenario_id', (select scenario_id from public.profit_calculations where id = v_calc),
+    'profit_calculation_id', v_calc,
+    'factors', jsonb_build_object('demand', jsonb_build_object('score', 80, 'basis', '[TEST]',
+      'inputs', jsonb_build_array(jsonb_build_object('name', '월 검색량', 'value', 12000, 'source', 'MANUAL', 'confidence', 'B', 'captured_on', '2026-10-06')))));
+
+  insert into public.opportunity_scores (product_id, keyword_id, scoring_version, total_score,
+    demand_score, sales_score, growth_score, competition_score, wing_score, review_barrier_score,
+    conversion_score, margin_score, stability_score, verdict, data_confidence, missing_factors, reasons, input_refs)
+  values (pg_temp.jv('p3'), v_kw, 'v1', 72.35, 80, 50, 50, 70, 80, 90, 40, 85, 100, 'REVIEW', 'B', '{}',
+    '[{"kind": "POSITIVE", "message": "[TEST]"}]', v_refs)
+  returning id into v_s1;
+  perform pg_temp.jv_set('sc_s1', v_s1::text);
+
+  perform pg_temp.jv_assert('SC01 엔진 형태 저장 (요소 9개 · missing_factors · data_confidence · reasons · input_refs)',
+    (select total_score = 72.35 and verdict = 'REVIEW' and data_confidence = 'B' and missing_factors = '{}'
+            and jsonb_array_length(reasons) = 1 and input_refs ->> 'engine' = 'score-engine-v1' and is_current
+     from public.opportunity_scores where id = v_s1));
+  perform pg_temp.jv_assert('SC02 input_refs 의 profit_calculation_id 로 PHASE 6 결과를 찾을 수 있음',
+    exists (select 1 from public.opportunity_scores s
+            join public.profit_calculations c on c.id = (s.input_refs ->> 'profit_calculation_id')::uuid
+            where s.id = v_s1 and c.is_current));
+  perform pg_temp.jv_assert('SC03 원본 데이터 출처·신뢰도·수집일이 input_refs 에 보존',
+    (select input_refs #>> '{factors,demand,inputs,0,captured_on}' = '2026-10-06'
+            and input_refs #>> '{factors,demand,inputs,0,confidence}' = 'B'
+     from public.opportunity_scores where id = v_s1));
+
+  -- 재계산: 같은 (상품, 키워드, 버전)의 현재 행을 내리고 새 행 INSERT
+  update public.opportunity_scores set is_current = false
+  where product_id = pg_temp.jv('p3') and keyword_id = v_kw and scoring_version = 'v1' and is_current;
+  insert into public.opportunity_scores (product_id, keyword_id, scoring_version, total_score, verdict, missing_factors, input_refs)
+  values (pg_temp.jv('p3'), v_kw, 'v1', 81, 'STRONG_BUY', '{}', '{"engine": "score-engine-v1"}');
+  perform pg_temp.jv_assert('SC04 재계산 = 이력 2행 · 현재 1행 · 이전 행 값 보존',
+    (select count(*) from public.opportunity_scores where product_id = pg_temp.jv('p3') and keyword_id = v_kw) = 2
+    and (select count(*) from public.opportunity_scores where product_id = pg_temp.jv('p3') and keyword_id = v_kw and is_current) = 1
+    and (select total_score = 72.35 and not is_current from public.opportunity_scores where id = v_s1));
+
+  -- 키워드 없는 맥락은 별도 현재 점수
+  insert into public.opportunity_scores (product_id, scoring_version, total_score, verdict, input_refs)
+  values (pg_temp.jv('p3'), 'v1', 40, 'EXCLUDE', '{"engine": "score-engine-v1"}');
+  perform pg_temp.jv_assert('SC05 키워드 맥락별 현재 점수 공존 (키워드 / 키워드 없음)',
+    (select count(*) from public.v_current_scores where product_id = pg_temp.jv('p3')) = 2);
+end;
+$$;
+
+select pg_temp.jv_expect_error('SC06 같은 맥락 현재 점수 2개 차단',
+  format($q$insert into public.opportunity_scores (product_id, keyword_id, scoring_version, total_score, verdict, input_refs) values ('%s', '%s', 'v1', 50, 'EXCLUDE', '{}')$q$,
+    pg_temp.jv('p3'), pg_temp.jv('kw')),
+  '23505');
+select pg_temp.jv_expect_error('SC07 이전 점수 값 수정 차단 (불변)',
+  format($q$update public.opportunity_scores set demand_score = 10 where id = '%s'$q$, pg_temp.jv('sc_s1')), 'P0001');
+select pg_temp.jv_expect_error('SC08 없는 점수 버전 차단',
+  format($q$insert into public.opportunity_scores (product_id, scoring_version, total_score, verdict, input_refs, is_current) values ('%s', 'v2', 50, 'EXCLUDE', '{}', false)$q$,
+    pg_temp.jv('p3')),
+  '23503');
+select pg_temp.jv_expect_error('SC09 total_score NULL 저장 불가 (데이터 부족은 저장하지 않음)',
+  format($q$insert into public.opportunity_scores (product_id, scoring_version, total_score, verdict, input_refs, is_current) values ('%s', 'v1', null, 'EXCLUDE', '{}', false)$q$,
+    pg_temp.jv('p3')),
+  '23502');
+do $$
+begin
+  perform pg_temp.jv_assert('SC10 scoring v1 가중치·판정 기준 그대로',
+    (select weights = '{"demand": 15, "salesVolume": 15, "salesGrowth": 10, "competition": 15, "wingEntry": 10,
+                        "reviewBarrier": 10, "conversion": 5, "margin": 15, "marketStability": 5}'::jsonb
+            and thresholds = '{"strongBuy": 80, "review": 60}'::jsonb and is_active
+     from public.scoring_versions where version = 'v1'));
+end;
+$$;
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1082,6 +1164,21 @@ begin
 end;
 $$;
 
+-- SC (B): A 의 점수에 쓰기 불가
+select pg_temp.jv_expect_error('SC11 B 가 A 의 상품에 점수 저장 불가',
+  format($q$insert into public.opportunity_scores (product_id, scoring_version, total_score, verdict, input_refs, is_current) values ('%s', 'v1', 99, 'STRONG_BUY', '{}', false)$q$,
+    pg_temp.jv('p3')),
+  '23503');
+do $$
+declare
+  v_n bigint;
+begin
+  update public.opportunity_scores set is_current = false where product_id = pg_temp.jv('p3');
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('SC12 B 의 A 점수 현재 해제 = 0행', v_n = 0);
+end;
+$$;
+
 -- A 의 데이터가 그대로인지 (postgres 로 확인)
 reset role;
 do $$
@@ -1090,6 +1187,9 @@ begin
     (select count(*) from public.products where owner_id = pg_temp.jv('user_a') and product_name = 'hacked') = 0
     and (select count(*) from public.products where owner_id = pg_temp.jv('user_a')) >= 3
     and (select count(*) from public.watchlist where owner_id = pg_temp.jv('user_a')) = 2);
+  perform pg_temp.jv_assert('SC13 B 의 시도 후 A 점수 보존',
+    (select count(*) from public.opportunity_scores where product_id = pg_temp.jv('p3') and is_current) = 2
+    and not exists (select 1 from public.opportunity_scores where owner_id = pg_temp.jv('user_b')));
   perform pg_temp.jv_assert('PF14 B 의 시도 후 A 수익성 데이터 보존',
     (select sale_price = 29900 from public.profit_scenarios where id = pg_temp.jv('pf_scn'))
     and (select count(*) from public.profit_calculations where scenario_id = pg_temp.jv('pf_scn')) = 2
