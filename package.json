@@ -12,7 +12,8 @@
     "db:types": "npx supabase gen types typescript --project-id ogfldnhumdqawcbunehl --schema public > src/types/database.ts",
     "test:profit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/profit/test.mjs",
     "test:score": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/scoring/test.mjs",
-    "test:dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/dashboard/test.mjs"
+    "test:dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/dashboard/test.mjs",
+    "test:import": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/import/test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -25,6 +26,7 @@
     "radix-ui": "^1.7.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "read-excel-file": "^9.3.12",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.7.0"
   },

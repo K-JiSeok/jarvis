@@ -1100,6 +1100,93 @@ end;
 $$;
 
 -- ===========================================================================
+-- IM. 파일 가져오기 저장 경로 (PHASE 9 앱이 쓰는 방식)
+-- ===========================================================================
+do $$
+declare
+  v_job uuid;
+  v_job2 uuid;
+  v_res jsonb;
+  v_snap bigint;
+  v_rank public.keyword_product_ranks;
+  v_prev jsonb;
+begin
+  insert into public.import_jobs (channel, import_type, source_type, file_name, file_hash, status, total_rows, started_at)
+  values ('FILE', 'PRODUCT_SNAPSHOTS', 'WING_SESSION', '[TEST] im.csv', 'im-hash-1', 'PROCESSING', 2, now()) returning id into v_job;
+  perform pg_temp.jv_set('im_job', v_job::text);
+
+  -- 상품 스냅샷: 새 행 (출처·신뢰도·수집일·import_job_id 보존)
+  v_res := public.upsert_product_snapshot(jsonb_build_object('product_id', pg_temp.jv('p3'), 'captured_on', '2026-09-01',
+    'captured_at', '2026-09-01T00:00:00+09:00', 'source_type', 'WING_SESSION', 'confidence', 'A', 'import_job_id', v_job,
+    'price', 19900, 'review_count', 0, 'conversion_rate', 0.042));
+  v_snap := (v_res #>> '{row,id}')::bigint;
+  insert into public.import_rows (import_job_id, row_number, record_key, payload, result, target_table, target_id)
+  values (v_job, 2, 'product_snapshot:x:2026-09-01:WING_SESSION', '{"raw": {"가격": "19,900원"}}', v_res ->> 'action', 'product_snapshots', v_snap::text);
+  perform pg_temp.jv_assert('IM01 가져온 스냅샷: INSERTED · 출처 WING_SESSION · 신뢰도 A · 수집일 · 실제 0 · import_job_id',
+    v_res ->> 'action' = 'INSERTED'
+    and (select source_type = 'WING_SESSION' and confidence = 'A' and captured_on = '2026-09-01' and review_count = 0
+                and import_job_id = v_job from public.product_snapshots where id = v_snap));
+
+  -- 같은 키 다시: 빈 값(NULL)은 기존 값 유지, 바뀐 값만 갱신 → UPDATED + previous
+  v_res := public.upsert_product_snapshot(jsonb_build_object('product_id', pg_temp.jv('p3'), 'captured_on', '2026-09-01',
+    'captured_at', '2026-09-01T00:00:00+09:00', 'source_type', 'WING_SESSION', 'confidence', 'A', 'import_job_id', v_job,
+    'price', 18900));
+  perform pg_temp.jv_assert('IM02 재가져오기: UPDATED · 파일에 없는 값(리뷰·전환율) 보존 · previous 반환',
+    v_res ->> 'action' = 'UPDATED' and (v_res #>> '{previous,price}')::int = 19900
+    and (select price = 18900 and review_count = 0 and conversion_rate = 0.042 from public.product_snapshots where id = v_snap));
+
+  -- 키워드 순위: 앱과 같이 기존 행 전체를 previous_values 로 남기고 갱신
+  insert into public.keyword_product_ranks (keyword_id, product_id, captured_on, captured_at, source_type, confidence, rank_position, import_job_id)
+  values (pg_temp.jv('kw'), pg_temp.jv('p3'), '2026-09-01', '2026-09-01T00:00:00+09:00', 'COUPANG_PAGE', 'B', 7, null) returning * into v_rank;
+  v_prev := to_jsonb(v_rank);
+  update public.keyword_product_ranks set rank_position = 3, import_job_id = v_job where id = v_rank.id;
+  insert into public.import_rows (import_job_id, row_number, payload, result, target_table, target_id, previous_values)
+  values (v_job, 3, '{}', 'UPDATED', 'keyword_product_ranks', v_rank.id::text, v_prev);
+  -- 새 순위 (INSERTED)
+  insert into public.keyword_product_ranks (keyword_id, product_id, captured_on, captured_at, source_type, confidence, rank_position, is_ad, import_job_id)
+  values (pg_temp.jv('kw'), pg_temp.jv('p3'), '2026-09-01', '2026-09-01T00:00:00+09:00', 'COUPANG_PAGE', 'B', 1, true, v_job) returning * into v_rank;
+  insert into public.import_rows (import_job_id, row_number, payload, result, target_table, target_id)
+  values (v_job, 4, '{}', 'INSERTED', 'keyword_product_ranks', v_rank.id::text);
+  insert into public.import_rows (import_job_id, row_number, payload, result, error_code, error_message)
+  values (v_job, 5, '{"raw": {"상품ID": "9999"}}', 'FAILED', 'PRODUCT_NOT_FOUND', '등록되지 않은 상품');
+
+  update public.import_jobs set status = 'PARTIAL', inserted_rows = 2, updated_rows = 1, failed_rows = 1, finished_at = now() where id = v_job;
+
+  perform pg_temp.jv_assert('IM03 행 결과 기록 (추가·갱신·실패, 실패 사유·원본)',
+    (select count(*) from public.import_rows where import_job_id = v_job) = 4
+    and (select error_message = '등록되지 않은 상품' and payload #>> '{raw,상품ID}' = '9999'
+         from public.import_rows where import_job_id = v_job and row_number = 5));
+
+  -- 부분 성공도 완료로 본다 → 같은 파일·유형 다시 성공 처리 불가
+  begin
+    insert into public.import_jobs (channel, import_type, source_type, file_hash, status) values ('FILE', 'PRODUCT_SNAPSHOTS', 'MANUAL', 'im-hash-1', 'SUCCEEDED');
+    raise exception 'FAIL IM04: second completion allowed';
+  exception when unique_violation then
+    perform pg_temp.jv_pass('IM04 부분 성공(PARTIAL) 파일도 같은 해시 재완료 차단');
+  end;
+  -- 다른 유형은 같은 해시라도 별개
+  insert into public.import_jobs (channel, import_type, source_type, file_hash, status) values ('FILE', 'SEARCH_RANKS', 'MANUAL', 'im-hash-1', 'SUCCEEDED') returning id into v_job2;
+  perform pg_temp.jv_pass('IM05 같은 파일이라도 유형이 다르면 허용');
+  delete from public.import_jobs where id = v_job2;
+
+  -- 되돌리기: 갱신한 순위는 7위로, 새 순위·새 스냅샷은 삭제
+  v_res := public.rollback_import(v_job);
+  perform pg_temp.jv_assert('IM06 되돌리기: 순위 이전 값 복원 · 새 행 삭제 · ROLLED_BACK',
+    (v_res ->> 'ok')::boolean
+    and (select rank_position = 7 and import_job_id is null from public.keyword_product_ranks
+         where keyword_id = pg_temp.jv('kw') and product_id = pg_temp.jv('p3') and captured_on = '2026-09-01' and not is_ad)
+    and not exists (select 1 from public.keyword_product_ranks where product_id = pg_temp.jv('p3') and captured_on = '2026-09-01' and is_ad)
+    and not exists (select 1 from public.product_snapshots where id = v_snap)
+    and (select status from public.import_jobs where id = v_job) = 'ROLLED_BACK', v_res::text);
+
+  -- 되돌린 파일은 다시 가져올 수 있다
+  insert into public.import_jobs (channel, import_type, source_type, file_hash, status) values ('FILE', 'PRODUCT_SNAPSHOTS', 'MANUAL', 'im-hash-1', 'SUCCEEDED') returning id into v_job2;
+  perform pg_temp.jv_pass('IM07 되돌린 뒤 같은 파일 다시 가져오기 허용');
+  perform pg_temp.jv_set('im_job2', v_job2::text);
+end;
+$$;
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1221,6 +1308,25 @@ begin
     and (select count(*) from public.product_snapshots where owner_id <> pg_temp.jv('user_b')) = 0
     and (select count(*) from public.keyword_snapshots where owner_id <> pg_temp.jv('user_b')) = 0
     and (select count(*) from public.keyword_product_ranks where owner_id <> pg_temp.jv('user_b')) = 0);
+end;
+$$;
+
+-- IM (B): A 의 가져오기 기록 접근 불가
+select pg_temp.jv_expect_error('IM08 B 가 A 의 job 에 행 기록 불가',
+  format($q$insert into public.import_rows (import_job_id, row_number, payload) values ('%s', 99, '{}')$q$, pg_temp.jv('im_job2')),
+  '23503');
+select pg_temp.jv_expect_error('IM09 B 가 A 의 job 되돌리기 불가 (보이지 않음)',
+  format($q$select public.rollback_import('%s')$q$, pg_temp.jv('im_job2')), 'P0002');
+do $$
+declare
+  v_n bigint;
+begin
+  perform pg_temp.jv_assert('IM10 B 는 A 의 import_jobs · import_rows 를 볼 수 없음',
+    (select count(*) from public.import_jobs where owner_id <> pg_temp.jv('user_b')) = 0
+    and (select count(*) from public.import_rows where owner_id <> pg_temp.jv('user_b')) = 0);
+  update public.import_jobs set status = 'FAILED' where id = pg_temp.jv('im_job2');
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('IM11 B 의 A job 수정 = 0행', v_n = 0);
 end;
 $$;
 
