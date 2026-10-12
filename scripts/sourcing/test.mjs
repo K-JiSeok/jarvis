@@ -1,0 +1,163 @@
+// npm run test:sourcing — PHASE 18 중국 도매 소싱 순수 함수 (공급 페이지 해석 · 검색어 · 링크 · 매칭 · 도착 원가)
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const { adaptSupplierPage, parseMoney, parseQtyRange, parseWeightKg, siteOf, currencyOf } = await import("../../src/lib/collectors/supplier/page.ts");
+const { toSourcingQuery, packQtyOf } = await import("../../src/lib/sourcing/translate.ts");
+const { searchLinks, imageSearchLink, jarvisPidOf } = await import("../../src/lib/sourcing/links.ts");
+const { matchSupply } = await import("../../src/lib/sourcing/matching.ts");
+const { calculateLandedCost, pickUnitPrice, TARIFF_RANGE } = await import("../../src/lib/sourcing/landed-cost.ts");
+const { calculateProfit } = await import("../../src/lib/profit/calculate.ts");
+
+const fixture = JSON.parse(readFileSync(join(here, "fixtures", "alibaba-ice-cube-tray.json"), "utf8"));
+const tests = [];
+const test = (name, fn) => tests.push([name, fn]);
+
+// 공급 페이지 해석 ------------------------------------------------------------------------
+test("Alibaba 실제 페이지: 상품 ID · 이름 · 이미지 · 원래 통화 가격(USD 0.99) · 구간 가격(원화 표시) · MOQ · 공급업체 · 속성", () => {
+  const { offer, issues } = adaptSupplierPage(fixture);
+  assert.equal(offer.site, "ALIBABA");
+  assert.equal(offer.siteProductId, "1600527072719");
+  assert.equal(offer.url, "https://www.alibaba.com/product-detail/Food-Grade-Silicone-Rectangle-Ice-Cube_1600527072719.html");
+  assert.match(offer.title, /^새로운 디자인 실리콘 아이스 큐브 트레이/);
+  assert.ok(!/Buy/.test(offer.title));
+  assert.equal(offer.imageUrls.length, 3);
+  assert.deepEqual(offer.basePrice, { amount: 0.99, currency: "USD" });
+  assert.deepEqual(offer.tiers.map((t) => [t.minQty, t.maxQty, t.amount, t.currency]), [[20, 99, 1772, "KRW"], [100, 999, 1704, "KRW"], [1000, 9999, 1636, "KRW"], [10000, null, 1350, "KRW"]]);
+  assert.equal(offer.tiersConverted, true); // 표시는 원화, 사이트 기준은 USD
+  assert.equal(offer.moq, 20);
+  assert.equal(offer.supplierName, "Shenzhen Armada Technology Co., Ltd.");
+  assert.equal(offer.supplierMeta.years, 15);
+  assert.equal(offer.material, "실리콘");
+  assert.equal(offer.sizeText, "17.5cm * 14.5cm * 4cm");
+  assert.equal(offer.weightKg, 0.152); // 총중량 우선
+  assert.equal(offer.categoryPath, "가정 및 정원 > 주방용품 > 주방 도구 & 소형용품 > 아이스크림 도구");
+  assert.deepEqual(offer.shipping && [offer.shipping.perQty, offer.shipping.amount, offer.shipping.currency], [20, 14215, "KRW"]);
+  assert.deepEqual(offer.colors, ["옐로우", "블랙"]);
+  assert.equal(issues.length, 0, issues.join(" / "));
+});
+test("공급 페이지: 지원하지 않는 주소 · 가격 없음 → 값을 만들지 않음 (null · 문제 기록)", () => {
+  assert.equal(adaptSupplierPage({ ...fixture, url: "https://www.coupang.com/vp/products/1" }).offer, null);
+  const bare = adaptSupplierPage({ ...fixture, url: "https://detail.1688.com/offer/712345678901.html", jsonLd: [], priceTiers: [], attributes: [], shippingText: null, h1: "硅胶冰格 食品级", supplierCardText: null });
+  assert.equal(bare.offer.site, "1688");
+  assert.equal(bare.offer.basePrice, null);
+  assert.equal(bare.offer.moq, null);
+  assert.equal(bare.offer.weightKg, null);
+  assert.ok(bare.issues.some((x) => /가격을 읽지 못했습니다/.test(x)));
+});
+test("공급 페이지: 금액 · 수량 · 무게 · 통화 · 사이트 판별", () => {
+  assert.deepEqual(parseMoney("US$0.99-1.20"), { amount: 0.99, currency: "USD" });
+  assert.deepEqual(parseMoney("¥3.50"), { amount: 3.5, currency: "CNY" });
+  assert.equal(parseMoney("가격 문의"), null);
+  assert.deepEqual(parseQtyRange("1,000-9,999 개"), { min: 1000, max: 9999 });
+  assert.deepEqual(parseQtyRange("≥10,000 개"), { min: 10000, max: null });
+  assert.deepEqual(parseQtyRange("2件起批"), null);
+  assert.equal(parseWeightKg("126g"), 0.126);
+  assert.equal(parseWeightKg("모름"), null);
+  assert.equal(currencyOf("₩1,772"), "KRW");
+  assert.deepEqual(siteOf("https://item.taobao.com/item.htm?spm=a&id=6789012345"), { site: "TAOBAO", id: "6789012345" });
+  assert.deepEqual(siteOf("https://detail.1688.com/offer/712345678901.html?spm=x"), { site: "1688", id: "712345678901" });
+});
+
+// 검색어 · 링크 -----------------------------------------------------------------------------
+test("검색어: 실제 쿠팡 상품명 → 중국어 · 영어 (브랜드 · 색상 · 판매 문구 제외, 사전에 없는 말은 unmapped 로 남김)", () => {
+  const a = toSourcingQuery("모나코올리브 모던 실리콘 트레이 대형, 화이트, 1개");
+  assert.equal(a.zh, "硅胶托盘大号");
+  assert.equal(a.en, "silicone tray large");
+  assert.deepEqual(a.unmapped, ["모나코올리브"]);
+  assert.equal(a.packQty, 1);
+  const b = toSourcingQuery("국산 프리미엄 실리콘 얼음트레이 15구, 핑크 뚜껑포함, 2개");
+  assert.equal(b.zh, "硅胶冰格");
+  assert.equal(b.cavities, 15);
+  assert.equal(b.packQty, 2);
+  const c = toSourcingQuery("밀폐 실리콘큐브 2개세트 냉동 보관 얼음틀");
+  assert.ok(c.zh.includes("冰格") && c.zh.includes("硅胶"));
+  assert.ok(c.unmapped.includes("밀폐") || c.unmapped.includes("보관"));
+  assert.equal(packQtyOf("로빈홈즈 1+1 실리콘 사각 얼음트레이"), 2);
+});
+test("링크: 1688 · 타오바오(중국어) · Alibaba(영어 · 원문) + jarvis_pid, 확인 여부 표시 · 이미지 검색은 이미지 주소 있을 때만", () => {
+  const pid = "af9c4092-98c6-43ca-9f8e-73caf6ccd289";
+  const links = searchLinks(toSourcingQuery("모나코올리브 모던 실리콘 트레이 대형"), pid);
+  assert.deepEqual(links.map((l) => [l.site, l.lang, l.verified]), [["1688", "zh", false], ["TAOBAO", "zh", false], ["ALIBABA", "en", true], ["ALIBABA", "ko", true]]);
+  assert.ok(links[0].url.includes(encodeURIComponent("硅胶托盘大号")) && links[0].url.includes("charset=utf8"));
+  assert.equal(jarvisPidOf(links[2].url), pid);
+  assert.equal(jarvisPidOf("https://www.alibaba.com/trade/search?SearchText=x&jarvis_pid=../../etc"), null);
+  assert.equal(imageSearchLink(null), null);
+  assert.match(imageSearchLink("https://sc04.alicdn.com/kf/a.jpg").url, /^https:\/\/lens\.google\.com\/uploadbyurl\?url=/);
+});
+
+// 매칭 ----------------------------------------------------------------------------------------
+const { offer } = adaptSupplierPage(fixture);
+test("매칭: 얼음 트레이 ↔ 실제 Alibaba 얼음 트레이 → 유사(추가 확인) — 이미지 미측정이라 높은 일치 아님", () => {
+  const m = matchSupply({ product: { name: "실리콘 대형 얼음트레이 하이볼 얼음틀 8구, 1개, 블랙", categoryPath: "주방용품 > 밀폐저장/도시락 > 특수저장용기 > 얼음틀/마늘용기 > 얼음틀" }, offer });
+  assert.equal(m.level, "SIMILAR");
+  assert.ok(m.reasons.some((r) => r.startsWith("종류 일치: ice_tray")));
+  assert.ok(m.reasons.some((r) => r.startsWith("재질 일치: silicone")));
+  assert.ok(m.unknown.some((u) => /이미지 유사도 미측정/.test(u)));
+  assert.equal(m.unitsPerListing, 1);
+});
+test("매칭: 서빙 트레이 ↔ 얼음 트레이 → 종류 다름 · 불명확 (같은 '트레이' 단어로 묶지 않음)", () => {
+  const m = matchSupply({ product: { name: "모나코올리브 모던 실리콘 트레이 대형, 화이트, 1개", categoryPath: null }, offer });
+  assert.equal(m.level, "UNCLEAR");
+  assert.ok(m.conflicts.some((c) => /종류 다름/.test(c)));
+});
+test("매칭: 구성 수량 다름(쿠팡 2개 묶음 · 공급 1개) → 별도 상품 · 원가 ×2 환산 · 이미지 유사 높아도 높은 일치 불가", () => {
+  const m = matchSupply({ product: { name: "로빈홈즈 1+1 실리콘 사각 얼음트레이, 2개", categoryPath: null }, offer, imageSimilarity: 0.95 });
+  assert.equal(m.unitsPerListing, 2);
+  assert.ok(m.conflicts.some((c) => /구성 수량 다름/.test(c)));
+  assert.notEqual(m.level, "HIGH");
+  const same = matchSupply({ product: { name: "실리콘 얼음트레이 1개", categoryPath: "주방용품" }, offer, imageSimilarity: 0.95 });
+  assert.equal(same.level, "HIGH");
+});
+
+// 도착 원가 · 수익성 -------------------------------------------------------------------------
+const FX = { currency: "USD", krw: 1341.49, source: "ECB 기준환율 (frankfurter.app)", rateDate: "2026-10-09" };
+test("도착 원가: 실제 Alibaba 값 (20개 구간 ₩1,772 · 표시 배송비 20개당 ₩14,215) → 확인 · 추정 · 미확인 구분, 미확인을 0 으로 넣지 않음", () => {
+  const unit = pickUnitPrice(offer, 20);
+  assert.deepEqual([unit.amount, unit.currency, unit.displayConverted], [1772, "KRW", true]);
+  const r = calculateLandedCost({ unitPrice: unit, unitsPerListing: 1, fx: FX, shipping: { perQty: 20, amountKrw: 14215, text: offer.shipping.text }, orderQty: 20, salePrice: 9900, feeRate: null });
+  const line = (k) => r.lines.find((l) => l.key === k);
+  assert.deepEqual([line("goods").min, line("goods").status], [1772, "CONFIRMED"]);
+  assert.deepEqual([line("shipping").min, line("shipping").status], [711, "CONFIRMED"]); // 14,215 ÷ 20 = 710.75
+  // 과세가격 = 1,772 + 710.75 = 2,482.75 → 관세 0~8% = 0~199 · 부가세 = 248~268
+  assert.deepEqual([line("duty").min, line("duty").max, line("duty").status], [0, 199, "ESTIMATED"]);
+  assert.deepEqual([line("vat").min, line("vat").max], [248, 268]);
+  assert.deepEqual(r.landed, { min: 2731, max: 2950 }); // 2,482.75 + 248.275 / 2,482.75 + 198.62 + 268.137
+  assert.ok(r.unknownItems.length >= 4 && r.unknownItems.every((u) => r.lines.find((l) => l.label === u).min === null));
+  assert.equal(r.confidence, "C");
+  assert.equal(r.confirmedProfitability, false);
+  // 이익은 Profit Engine 그대로: 판매가 9,900 · 수수료 10.8% · 원가 1,772 · 운송 711 · 관부가세(나쁜 경우) 467
+  const direct = calculateProfit({ salePrice: 9900, unitCostAmount: 1772, exchangeRate: 1, intlShippingPerUnit: 711, domesticShippingPerUnit: null, feeRate: 0.108, logisticsFeePerUnit: null, adCostRate: null, adCostPerUnit: null, otherCostPerUnit: 467, fixedCostTotal: null, expectedMonthlyUnits: null });
+  assert.equal(r.profit.low.netProfitPerUnit, direct.netProfitPerUnit);
+  assert.equal(r.profit.low.netProfitPerUnit, 9900 - (1772 + 711 + 467 + 1069));
+  assert.ok(r.profit.high.netProfitPerUnit > r.profit.low.netProfitPerUnit);
+  // 목표 마진 30% 판매가 (나쁜 경우) = 2,950 ÷ (1 − 0.108 − 0.3)
+  assert.equal(r.targetPrices.find((t) => t.margin === 0.3).max, Math.round(2950 / (1 - 0.108 - 0.3)));
+});
+test("도착 원가: 원래 통화(USD) + 환율 · 환율 없으면 계산 안 함 · 운송비 없으면 미확인 + 세액 과소 경고 · 묶음 ×2", () => {
+  const r = calculateLandedCost({ unitPrice: { amount: 0.99, currency: "USD", basis: "구조화 데이터 가격", displayConverted: false }, unitsPerListing: 2, fx: FX, shipping: null, orderQty: 10000, salePrice: null, feeRate: 0.108 });
+  assert.equal(r.lines.find((l) => l.key === "goods").min, Math.round(0.99 * 1341.49 * 2));
+  assert.equal(r.lines.find((l) => l.key === "shipping").status, "UNKNOWN");
+  assert.ok(r.warnings.some((w) => /과세가격 · 세액이 낮게/.test(w)));
+  assert.equal(r.profit, null);
+  const noFx = calculateLandedCost({ unitPrice: { amount: 3.5, currency: "CNY", basis: "x", displayConverted: false }, unitsPerListing: 1, fx: FX, shipping: null, orderQty: 1, salePrice: 9900, feeRate: null });
+  assert.equal(noFx.landed, null);
+  assert.deepEqual(noFx.unknownItems, ["환율"]);
+  assert.equal(TARIFF_RANGE.max, 0.08);
+});
+
+let passed = 0;
+for (const [name, fn] of tests) {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`  ✓ ${name}`);
+  } catch (error) {
+    console.error(`  ✗ ${name}\n    ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+console.log(`\nSourcing ${passed}/${tests.length}`);

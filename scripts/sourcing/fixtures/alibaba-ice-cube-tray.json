@@ -1,0 +1,38 @@
+{
+  "_note": "2026-10-12 실제 Alibaba.com 상품 페이지에서 extension/src/content/dom/supplier.ts 의 readSupplierPage 로 읽은 값 (JSON-LD 의 이미지 · 리뷰 일부만 줄임)",
+  "url": "https://www.alibaba.com/product-detail/Food-Grade-Silicone-Rectangle-Ice-Cube_1600527072719.html",
+  "host": "www.alibaba.com",
+  "title": "새로운 디자인 실리콘 아이스 큐브 트레이 아이스 스틱 만들기 금형 식품 학년 실리콘 사각형 아이스 큐브 금형 - Buy Product on Alibaba.com",
+  "h1": "새로운 디자인 실리콘 아이스 큐브 트레이 아이스 스틱 만들기 금형 식품 학년 실리콘 사각형 아이스 큐브 금형",
+  "jsonLd": [
+    "\n        [\n            {\n                \"@context\": \"https://schema.org/\",\n                \"@type\": \"Product\",\n                \"@id\": \"1600527072719\",\n        \"name\": \"새로운 디자인 실리콘 아이스 큐브 트레이 아이스 스틱 만들기 금형 식품 학년 실리콘 사각형 아이스 큐브 금형 - Buy  Product on Alibaba.com\",\n                \"image\": [\"https://sc04.alicdn.com/kf/H000ef61cff214cd99ada7e4e92edf57e8.jpg\",\"https://sc04.alicdn.com/kf/Hba86f34047c74e74aadb9ebeeb634501C.jpg\",\"https://sc04.alicdn.com/kf/H423b95bdba0d49248ed4aad7478bdbaeh.jpg\"],\n                \"description\": \"새로운 디자인 실리콘 아이스 큐브 트레이\",\n        \"sku\": \"1600527072719\",\n        \"mpn\": \"1600527072719-00\",\n                \"brand\": {\n        \"@type\": \"Brand\",\n        \"name\": \"Shenzhen Armada Technology Co., Ltd.\"\n        }\n                ,\n        \"offers\": {\n            \"@type\": \"Offer\",\n                        \"url\":\"//indonesian.alibaba.com/product-detail/새로운-디자인-실리콘-아이스-큐브-트레이-1600527072719.html\",\n                        \"offerCount\": 1,\n            \"availability\": \"http://schema.org/InStock\",\n                    \"priceCurrency\": \"USD\",\n            \"price\": \"0.99\"\n                            ,\n            \"priceValidUntil\": \"2027-10-12\"\n                }\n                }\n                ,\n        {\n        \"@context\": \"https://schema.org\",\n        \"@type\": \"ImageObject\",\n        \"contentUrl\": \"https://sc04.alicdn.com/kf/H000ef61cff214cd99ada7e4e92edf57e8.jpg\",\n        \"creditText\": \"Alibaba\"\n            }\n            ]\n",
+    "\n            {\n              \"@context\": \"https://schema.org\",\n              \"@type\": \"BreadcrumbList\",\n              \"itemListElement\": [\n                {\"@type\": \"ListItem\", \"position\": 1, \"name\": \"가정 및 정원\"},\n                {\"@type\": \"ListItem\", \"position\": 2, \"name\": \"주방용품\"},\n                {\"@type\": \"ListItem\", \"position\": 3, \"name\": \"주방 도구 & 소형용품\"},\n                {\"@type\": \"ListItem\", \"position\": 4, \"name\": \"아이스크림 도구\"}\n              ]\n            }\n            "
+  ],
+  "ogImage": null,
+  "ogTitle": "새로운 디자인 실리콘 아이스 큐브 트레이 아이스 스틱 만들기 금형 식품 학년 실리콘 사각형 아이스 큐브 금형 - Buy  Product on Alibaba.com",
+  "priceTiers": [
+    { "price": "₩1,772", "qty": "20-99 개" },
+    { "price": "₩1,704", "qty": "100-999 개" },
+    { "price": "₩1,636", "qty": "1,000-9,999 개" },
+    { "price": "₩1,350", "qty": "≥10,000 개" }
+  ],
+  "attributes": [
+    ["재질", "실리콘"],
+    ["원산지", "Guangdong, China"],
+    ["브랜드명", "ARMADA"],
+    ["모델 번호", "AI"],
+    ["제품 이름", "실리콘 아이스 큐브 트레이"],
+    ["색상", "옐로우, 블랙"],
+    ["크기", "17.5cm * 14.5cm * 4cm"],
+    ["무게", "126g"],
+    ["모양", "직사각형"],
+    ["MOQ", "20pcs"],
+    ["판매", "단일 품목"],
+    ["하나의 패키지 크기", "19.5X16.5X7 cm"],
+    ["단일 총중량", "0.152 kg"]
+  ],
+  "shippingText": "Shipping Change 스탠더드 배송비:20개당 ₩14,215 ₩41,473 보장된 배송: 10월 19일 ~ 11월 11일",
+  "supplierCardText": "공급업체 알아보기 Shenzhen Armada Technology Co., Ltd. 복합 전문 공급업체 Alibaba.com에서 15년 4.2 CN Shenzhen Guangdong에 위치 아시아 인기 공급업체",
+  "supplierUrl": "https://armadacn.m.en.alibaba.com/?productId=1600527072719&from=detail_company_card",
+  "skuText": null
+}
