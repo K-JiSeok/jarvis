@@ -124,6 +124,47 @@ export function ScoreCard({
           곱해 합산합니다.
         </p>
 
+        {/* 9개 요소 계산 상태 요약 (엔진 결과 그대로 — 화면에서 따로 계산하지 않는다) */}
+        <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-[1fr_1fr]" data-testid="score-status">
+          <ul className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-2">
+            {preview.factors.map((f) => (
+              <li key={f.factor} className="flex justify-between gap-2" data-factor={f.factor} data-score={f.score ?? ""}>
+                <span>{f.label}</span>
+                {f.score == null ? (
+                  <span className="text-amber-700 dark:text-amber-300">— 데이터 부족</span>
+                ) : (
+                  <span className="tabular-nums">
+                    <strong>{fmt(f.score)}</strong>
+                    <span className="text-muted-foreground"> / 100</span> <span className="text-emerald-700 dark:text-emerald-300">✓</span>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="space-y-1 text-sm">
+            <p data-testid="score-verdict">
+              최종 판정:{" "}
+              {preview.complete ? (
+                <>
+                  <strong className="tabular-nums">{fmt(preview.total!)}점</strong> <VerdictBadge verdict={preview.verdict!} />
+                </>
+              ) : (
+                <strong className="text-amber-700 dark:text-amber-300">계산 불가 ({preview.missingFactors.length}개 요소 데이터 부족)</strong>
+              )}
+            </p>
+            {!preview.complete && (
+              <>
+                <p className="text-muted-foreground text-xs">부족한 데이터</p>
+                <ul className="list-disc pl-5 text-xs" data-testid="score-missing">
+                  {[...new Set(preview.factors.flatMap((f) => (f.score == null ? f.missing : [])))].map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead>

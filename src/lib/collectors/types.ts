@@ -12,7 +12,8 @@
  * - 숫자는 number 또는 화면 문자열("29,900원", "4.5", "45%") 그대로 둘 다 받는다. 비율을 number 로 줄 때는 0~1 소수.
  */
 
-export const COLLECTOR_SOURCES = ["COUPANG_PAGE", "EXTENSION", "WING_SESSION"] as const;
+/** OFFICIAL_API: 공식 API 응답 (PHASE 13 네이버 검색광고 키워드 도구 — 서버 수집기만 쓴다) */
+export const COLLECTOR_SOURCES = ["COUPANG_PAGE", "EXTENSION", "WING_SESSION", "OFFICIAL_API"] as const;
 export type CollectorSource = (typeof COLLECTOR_SOURCES)[number];
 export type CollectorConfidence = "A" | "B" | "C";
 

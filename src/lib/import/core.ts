@@ -432,7 +432,8 @@ export function convertCell(field: FieldDef, raw: string, unit: RatioUnit): Cell
 // 정규화 레코드 ---------------------------------------------------------------------------
 
 interface NormalizedBase {
-  source: ImportSource;
+  /** 파일은 ImportSource 만. OFFICIAL_API 는 서버 수집기(네이버 검색광고, PHASE 13)만 만든다 */
+  source: ImportSource | "OFFICIAL_API";
   confidence: ImportConfidence;
   capturedOn: string;
   capturedAt: string;

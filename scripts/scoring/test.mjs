@@ -284,6 +284,82 @@ test("구간 선형 보간 · 중앙값", () => {
   assert.equal(median([]), null);
 });
 
+// PHASE 13: 실제 수집 데이터 형태로 3개 상품 비교 (엔진 · 정규화 그대로, 기대값은 RULES 구간을 손으로 계산한 값)
+// 공통: 키워드 1페이지 집계(평균 리뷰 1,113.3) · 가격 이력 10,000 / 10,200 / 9,800 · 대표 시나리오 순이익률 25% · 판매가 10,500
+// 경쟁상품 A(11,000원 · 리뷰 500 · WING) B(12,000 · 1,500 · 직매입) C(9,000 · 3,000 · 로켓그로스)
+const P13_HISTORY = [hist("2026-09-10", 10000, 11), hist("2026-09-20", 10200, 12), hist("2026-10-01", 9800, 13)];
+const P13_COMPETITORS = [
+  ["A", 11000, 500, "WING_SELLER"],
+  ["B", 12000, 1500, "COUPANG_RETAIL"],
+  ["C", 9000, 3000, "ROCKET_GROWTH_SELLER"],
+].map(([name, price, reviews, seller]) => ({
+  productId: name,
+  productName: name,
+  relationType: "SIMILAR",
+  isActive: true,
+  metrics: { ...emptyMetrics, price: dp(price), reviewCount: dp(reviews), sellerTypeObserved: dp(seller) },
+}));
+function p13(keywordMetrics, competitors) {
+  return {
+    asOf: "2026-10-08",
+    product: { id: "t", name: "대상", metrics: { ...emptyMetrics, price: dp(9800), reviewCount: dp(10) } },
+    keyword: {
+      id: "k",
+      keyword: "[TEST] 캠핑의자",
+      metrics: { searchVolume: null, searchGrowthRate: null, competitionIntensity: null, brandConcentration: null, wingRatio: null, averageReviews: dp(1113.3), ...keywordMetrics },
+    },
+    competitors,
+    salesHistory: { actual: [], estimated: [] },
+    priceHistory: P13_HISTORY,
+    margin: { scenarioId: "s", scenarioName: "기본", calculationId: "c", formulaVersion: "profit-v1", netMarginRate: 0.25, salePrice: 10500, calculatedAt: "2026-10-08T00:00:00Z" },
+  };
+}
+const scoresOf = (r) => Object.fromEntries(r.factors.map((f) => [f.factor, f.score]));
+
+test("PHASE 13 T1 검색량 없음 · 경쟁상품 연결 없음 → 수요 · 경쟁 · WING 미계산, 리뷰 장벽은 키워드 평균 리뷰", () => {
+  const r = calculateOpportunityScore(p13({}, []), config);
+  const s = scoresOf(r);
+  assert.equal(s.demand, null);
+  assert.equal(s.competition, null);
+  assert.equal(s.wingEntry, null);
+  assert.equal(s.reviewBarrier, Math.round((50 - (113.3 / 2000) * 30) * 100) / 100); // 48.3
+  assert.equal(s.margin, 72.5); // 0.25 → 60 + 0.5 × 25
+  assert.equal(s.marketStability, 100); // 변동계수 1.6% ≤ 2%
+  assert.deepEqual([s.salesVolume, s.salesGrowth, s.conversion], [null, null, null]);
+  assert.equal(r.complete, false);
+  assert.equal(r.total, null);
+  assert.deepEqual(r.missingFactors, ["demand", "salesVolume", "salesGrowth", "competition", "wingEntry", "conversion"]);
+});
+test("PHASE 13 T2 검색량 10,000 + 경쟁상품 A·B·C → 수요 60 · 경쟁 83.64 · WING 57.78 · 리뷰 장벽 42.5 (경쟁상품 우선)", () => {
+  const s = scoresOf(calculateOpportunityScore(p13({ searchVolume: dp(10000) }, P13_COMPETITORS), config));
+  assert.equal(s.demand, 60); // 5,000→50 · 20,000→80 구간
+  assert.equal(s.competition, 83.64); // 판매가 10,500 ÷ 경쟁 중앙값 11,000 = 0.9545
+  assert.equal(s.wingEntry, 57.78); // 3개 중 WING 1 = 33.3%
+  assert.equal(s.reviewBarrier, 42.5); // 경쟁 리뷰 중앙값 1,500 (키워드 평균 리뷰보다 우선)
+  assert.equal(s.marketStability, 100);
+  assert.equal(s.margin, 72.5);
+});
+test("PHASE 13 T3 검색량 10,000 + 증감률 +12% → 수요 62.4 (추세 ±10점 가감) · 나머지 T2 와 같음 · 판정은 여전히 계산 불가", () => {
+  const r = calculateOpportunityScore(p13({ searchVolume: dp(10000), searchGrowthRate: dp(0.12) }, P13_COMPETITORS), config);
+  const s = scoresOf(r);
+  assert.equal(s.demand, 62.4);
+  assert.equal(r.complete, false);
+  assert.deepEqual(r.missingFactors, ["salesVolume", "salesGrowth", "conversion"]);
+  assert.equal(r.knownWeight, 70);
+});
+test("PHASE 13 키워드 평균가 · 로켓 비율은 V1 엔진 입력이 아니다 (값이 있어도 점수 변화 없음)", () => {
+  const base = calculateOpportunityScore(p13({ searchVolume: dp(10000) }, P13_COMPETITORS), config);
+  const withAgg = calculateOpportunityScore(p13({ searchVolume: dp(10000), averagePrice: dp(25227), rocketRatio: dp(0.865) }, P13_COMPETITORS), config);
+  assert.deepEqual(scoresOf(withAgg), scoresOf(base));
+});
+test("PHASE 13 가격 기록 2회 · 경쟁상품 판매자 유형 2개면 안정성 · WING 미계산 (최소 3)", () => {
+  const i = p13({ searchVolume: dp(10000) }, P13_COMPETITORS.slice(0, 2));
+  i.priceHistory = P13_HISTORY.slice(0, 2);
+  const s = scoresOf(calculateOpportunityScore(i, config));
+  assert.equal(s.marketStability, null);
+  assert.equal(s.wingEntry, null);
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {

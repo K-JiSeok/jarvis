@@ -195,6 +195,39 @@ test("Batch", "대량: 상품 20개 × 100일 = 2,000 레코드 → 배치 행 �
   assert.ok(ms < 500, `${ms}ms`);
 });
 
+// Naver 검색광고 (PHASE 13) ---------------------------------------------------------------
+groups.Naver = [];
+const { parseQueryCount, mapKeywordStats, hintKeywordsParam, signatureMessage } = await import("../../src/lib/collectors/naver/searchad.ts");
+const { naverSignature } = await import("../../src/lib/collectors/naver/signature.ts");
+test("Naver", "조회수 문자열: 숫자 · 콤마 · \"<10\"(모름, 0 아님)", () => {
+  assert.deepEqual(parseQueryCount("1,234"), { value: 1234, below10: false });
+  assert.deepEqual(parseQueryCount(560), { value: 560, below10: false });
+  assert.deepEqual(parseQueryCount("< 10"), { value: null, below10: true });
+  assert.deepEqual(parseQueryCount("abc"), { value: null, below10: false });
+});
+test("Naver", "서명: 공식 샘플 형식 · OpenSSL 로 따로 계산한 값과 같음 · hintKeywords 5개 제한", () => {
+  assert.equal(signatureMessage("1700000000000", "get", "/keywordstool"), "1700000000000.GET./keywordstool");
+  assert.equal(naverSignature("jarvis-test-secret", "1700000000000", "GET", "/keywordstool"), "VZEycCkgeFw9bJ4qNmPNMuY1Cej4P23orWT2n29xoEw=");
+  assert.equal(hintKeywordsParam(["캠핑 의자", "거치대"]), "캠핑의자,거치대");
+  assert.throws(() => hintKeywordsParam(["a", "b", "c", "d", "e", "f"]));
+});
+test("Naver", "응답 → 키워드 스냅샷: PC+모바일 · OFFICIAL_API A · 이전 값 → 기존 증감률 공식 · <10 · 없는 키워드", () => {
+  const list = [
+    { relKeyword: "캠핑의자", monthlyPcQcCnt: "2,000", monthlyMobileQcCnt: "8,000", compIdx: "high" },
+    { relKeyword: "희귀키워드", monthlyPcQcCnt: "<10", monthlyMobileQcCnt: "30" },
+    { relKeyword: "연관만", monthlyPcQcCnt: "1", monthlyMobileQcCnt: "1" },
+  ];
+  const { records, issues } = mapKeywordStats(["캠핑 의자", "희귀키워드", "없는키워드"], list, "2026-10-08T01:00:00Z", { "캠핑 의자": 8929 });
+  assert.equal(records.length, 2);
+  const n = normalizeKeyword(records[0]).record;
+  assert.equal(n.source, "OFFICIAL_API");
+  assert.equal(n.confidence, "A");
+  assert.equal(n.metrics.search_volume, 10000);
+  assert.equal(n.metrics.search_growth_rate, Math.round(((10000 - 8929) / 8929) * 10000) / 10000);
+  assert.equal(records[1].searchVolume, null);
+  assert.equal(issues.length, 2);
+});
+
 let total = 0;
 let passed = 0;
 for (const [group, tests] of Object.entries(groups)) {

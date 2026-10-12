@@ -267,6 +267,11 @@ test("API", "크기 제한: records 2,000건 통과 · 2,001건 413 · 검색 �
   const big = parseIngestRequest(req({ records: [{ kind: "search", ...META, keyword: "a", items: Array.from({ length: 201 }, (_, i) => ({ rank: i + 1 })) }] }));
   assert.deepEqual([big.ok, big.status], [false, 413]);
 });
+test("API", "확장 프로그램은 출처 OFFICIAL_API 를 쓸 수 없다 (서버 수집기 전용, PHASE 13)", () => {
+  const r = parseIngestRequest(req({ records: [{ kind: "keyword", source: "OFFICIAL_API", confidence: "A", capturedAt: META.capturedAt, keyword: "a", searchVolume: 1 }] }));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /OFFICIAL_API/);
+});
 test("API", "서버 시각 검사: 24시간보다 오래된 수집 시각 거부", () => {
   const old = new Date(Date.now() - 25 * 3600_000).toISOString();
   const r = parseIngestRequest(req({ records: [{ kind: "product", ...adaptProductPage(KOMET_RAW, { ...META, capturedAt: old }) }] }));

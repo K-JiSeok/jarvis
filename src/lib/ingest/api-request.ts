@@ -69,6 +69,8 @@ export function parseIngestRequest(body: unknown, now = Date.now()): ParseResult
     if (!isObject(r)) return fail(`records[${i}] 가 객체가 아닙니다.`);
     const { kind, ...rest } = r;
     if (typeof rest.capturedAt !== "string") return fail(`records[${i}].capturedAt 이 없습니다.`);
+    // 확장 프로그램은 화면을 읽는다 — 공식 API 출처는 서버 수집기(네이버 검색광고 등)만 쓴다 (PHASE 13)
+    if (rest.source === "OFFICIAL_API") return fail(`records[${i}].source 에 OFFICIAL_API 를 쓸 수 없습니다 (서버 수집기 전용).`);
     const at = Date.parse(rest.capturedAt);
     if (Number.isFinite(at) && now - at > MAX_CAPTURE_AGE_MS) return fail(`records[${i}].capturedAt 이 24시간보다 오래됐습니다 (서버 시각 기준).`);
     if (kind === "product") batch.products.push(rest as unknown as CollectedProduct);

@@ -7,6 +7,7 @@ import { DataPointValue } from "@/components/common/data-point-value";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { KeywordSettingsForm } from "@/components/keywords/keyword-settings-form";
+import { NaverVolumeForm } from "@/components/keywords/naver-volume-form";
 import { SearchObservations } from "@/components/keywords/search-observations";
 import { SnapshotForm } from "@/components/keywords/snapshot-form";
 import { SnapshotHistory } from "@/components/keywords/snapshot-history";
@@ -17,6 +18,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { formatDecimal, formatNumber, formatPercent, formatShortDate, formatSignedPercent, formatWon } from "@/lib/format";
 import { getKeywordDetail, listCategories } from "@/lib/repositories/keywords";
 import { listRanksForKeyword } from "@/lib/repositories/ranks";
+import { naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
 import { listSearchObservations } from "@/lib/repositories/search-observations";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import type { DataPoint } from "@/types/common";
@@ -111,6 +113,18 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>검색량 (수요)</CardTitle>
+          <CardDescription>
+            Opportunity Score 의 수요 요소는 이 키워드의 월 검색량 · 검색량 증감률을 씁니다. 공식 API(네이버 검색광고) 또는 /import 파일 · 아래 직접 입력으로 넣습니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <NaverVolumeForm keywordId={keyword.id} keyword={keyword.keyword} configured={naverSearchAdConfig() != null} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

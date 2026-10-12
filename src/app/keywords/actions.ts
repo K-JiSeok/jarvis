@@ -151,3 +151,23 @@ function parseSnapshotForm(
 
   return { snapshot: { keywordId, capturedOn, confidence, metrics, calculated } };
 }
+
+// 네이버 검색광고 API 검색량 (PHASE 13) ------------------------------------------------------
+
+export async function fetchNaverVolumeAction(keywordId: string, keyword: string, prev: FormState): Promise<FormState> {
+  if (prev.ok && prev.message?.startsWith("요청 중")) return prev;
+  if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
+  const { collectNaverSearchVolumes, naverSearchAdConfig } = await import("@/lib/ingest/naver-searchad");
+  if (!naverSearchAdConfig()) {
+    return fail("네이버 검색광고 API 키가 설정되지 않았습니다. 키가 생기면 .env.local 에 NAVER_SEARCHAD_API_KEY · NAVER_SEARCHAD_SECRET_KEY · NAVER_SEARCHAD_CUSTOMER_ID 를 넣으세요. 그 전에는 /import 로 검색량 파일을 넣을 수 있습니다.");
+  }
+  try {
+    const r = await collectNaverSearchVolumes([keyword]);
+    revalidatePath(`/keywords/${keywordId}`);
+    if (!r.saved) return fail(r.issues.map((i) => i.message).join(" / ") || "저장할 검색량이 없습니다.");
+    if (!r.saved.ok) return fail("저장 중 오류가 나서 취소했습니다.");
+    return { ok: true, message: `네이버 검색광고 검색량을 저장했습니다 (공식 API · A).${r.issues.length ? ` 참고: ${r.issues.map((i) => i.message).join(" / ")}` : ""}` };
+  } catch (error) {
+    return fail((error as Error).message);
+  }
+}
