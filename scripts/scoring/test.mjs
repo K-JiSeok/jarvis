@@ -405,6 +405,70 @@ test("PHASE 15 데이터 부족 이유: 검색량(키 없음 · 수집 실패 ·
   assert.equal(shortageReasons({ hasSearchVolume: true, naverConfigured: true, naverLastAttempt: null, products: [] }).length, 0);
 });
 
+// PHASE 16: 데이터 준비 상태 (점수 · 판정을 바꾸지 않고 엔진 입력 · 결과만 읽는다)
+const { productReadiness, keywordReadiness } = await import("../../src/lib/discover/readiness.ts");
+const stateOf = (items) => Object.fromEntries(items.map((x) => [x.key, x.state]));
+
+test("PHASE 16 준비 상태: 데이터 없음 → 전부 없음(MISSING), 0 으로 채우지 않고 다음 할 일 안내 · 점수 · 판정 그대로", () => {
+  const input = emptyInput();
+  const result = calculateOpportunityScore(input, config);
+  const items = productReadiness({ input, result, reviewHistory: [], scenario: null });
+  assert.deepEqual(stateOf(items), { price: "MISSING", review: "MISSING", sales: "MISSING", growth: "MISSING", conversion: "MISSING", profit: "MISSING", verdict: "MISSING" });
+  assert.ok(items.every((x) => x.next));
+  assert.match(items.find((x) => x.key === "conversion").status, /추정하지 않음/);
+  assert.match(items.find((x) => x.key === "sales").next, /임의로 만들지 않음/);
+  assert.equal(result.total, null);
+  assert.equal(result.verdict, null);
+});
+test("PHASE 16 준비 상태: 모든 데이터 → 전부 준비됨, 최종 판정 가능 · V1 판정 그대로", () => {
+  const input = best();
+  const result = calculateOpportunityScore(input, config);
+  const items = productReadiness({ input, result, reviewHistory: [{ capturedOn: "2026-09-01", value: 5 }, { capturedOn: "2026-10-01", value: 9 }], scenario: { hasCalculation: true, netProfitPerUnit: 4500, netMarginRate: 0.5 } });
+  input.product.metrics.reviewCount = dp(9);
+  const items2 = productReadiness({ input, result, reviewHistory: [{ capturedOn: "2026-09-01", value: 5 }, { capturedOn: "2026-10-01", value: 9 }], scenario: { hasCalculation: true, netProfitPerUnit: 4500, netMarginRate: 0.5 } });
+  assert.equal(stateOf(items).review, "MISSING"); // 대상 상품 리뷰 수가 없으면 없음
+  assert.ok(items2.every((x) => x.state === "READY"), JSON.stringify(stateOf(items2)));
+  assert.match(items2.find((x) => x.key === "sales").status, /^실제값/);
+  assert.match(items2.find((x) => x.key === "verdict").status, /9\/9/);
+  assert.equal(result.verdict, "STRONG_BUY");
+});
+test("PHASE 16 준비 상태: 가격 1회 · 판매량 없음 · 시나리오 없음 → 가격 일부 · 판매량 없음 · 판정 일부(부족 요소 이름)", () => {
+  const input = p13({ searchVolume: dp(560) }, []);
+  input.priceHistory = [hist("2026-10-08", 9800, 1)];
+  input.margin = null;
+  const result = calculateOpportunityScore(input, config);
+  const items = productReadiness({ input, result, reviewHistory: [{ capturedOn: "2026-10-08", value: 10 }], scenario: null });
+  const s = stateOf(items);
+  assert.equal(s.price, "PARTIAL");
+  assert.match(items.find((x) => x.key === "price").status, /기록 1회 \(시장 안정성에 3회 필요\)/);
+  assert.equal(s.sales, "MISSING");
+  assert.equal(s.profit, "MISSING");
+  assert.equal(s.verdict, "PARTIAL");
+  assert.match(items.find((x) => x.key === "verdict").status, /판매량.*마진.*시장 안정성/);
+  // 추정 판매량만 있으면 "추정값"으로 따로 표시 (실제와 합치지 않음)
+  input.product.metrics.salesEstimated = period(300, 30, { source: "EXTERNAL_TOOL" });
+  const r2 = calculateOpportunityScore(input, config);
+  assert.match(productReadiness({ input, result: r2, reviewHistory: [], scenario: null }).find((x) => x.key === "sales").status, /^추정값 300개 \/ 30일/);
+});
+test("PHASE 16 키워드 준비 상태: 네이버 값 · 10 미만 · 수집 실패 · 미수집 · 키 없음 구분, 다른 출처 값은 따로 표시", () => {
+  const base = { naverConfigured: true, naverLatest: null, naverLastAttempt: null, searchVolume: null, coupangSearch: null };
+  const ok = keywordReadiness({ ...base, naverLatest: { total: 560, capturedOn: "2026-10-12" }, coupangSearch: { capturedAt: "2026-10-12T05:37:00Z", total: 60, registered: 0 } });
+  assert.deepEqual(stateOf(ok), { naver: "READY", coupangSearch: "READY" });
+  assert.match(ok[0].status, /쿠팡 검색량 아님/);
+  const below = keywordReadiness({ ...base, naverLastAttempt: { ok: false, code: "NAVER_BELOW_10", label: "10 미만", at: "2026-10-12T05:00:00Z" } });
+  assert.equal(below[0].state, "MISSING");
+  assert.match(below[0].status, /10 미만/);
+  assert.match(below[0].next, /다른 표현/);
+  assert.equal(below[1].state, "MISSING");
+  const belowManual = keywordReadiness({ ...base, naverLastAttempt: { ok: false, code: "NAVER_BELOW_10", label: "10 미만", at: "2026-10-12T05:00:00Z" }, searchVolume: dp(15) });
+  assert.equal(belowManual[0].state, "PARTIAL");
+  assert.match(belowManual[0].status, /직접 입력 값 15 사용 중/);
+  const failed = keywordReadiness({ ...base, naverLastAttempt: { ok: false, code: "NAVER_AUTH", label: "인증 실패", at: "2026-10-12T05:00:00Z" } });
+  assert.match(failed[0].status, /수집 실패 — 인증 실패/);
+  assert.match(keywordReadiness(base)[0].status, /^미수집/);
+  assert.match(keywordReadiness({ ...base, naverConfigured: false })[0].status, /API 키 없음/);
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {

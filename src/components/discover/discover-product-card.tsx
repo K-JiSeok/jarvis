@@ -3,7 +3,10 @@ import Link from "next/link";
 import { VerdictBadge } from "@/components/common/score-badge";
 import { SourceBadge } from "@/components/common/source-badge";
 import { Badge } from "@/components/ui/badge";
+import { productReadiness } from "@/lib/discover/readiness";
 import { discoverStatus } from "@/lib/discover/summary";
+
+import { ReadinessList } from "./readiness-list";
 import { formatPercent, formatShortDate, formatWon } from "@/lib/format";
 import type { DiscoverOrigin, DiscoverProduct } from "@/lib/repositories/discover";
 import { cn } from "@/lib/utils";
@@ -63,6 +66,22 @@ export function DiscoverProductCard({ p }: { p: DiscoverProduct }) {
           )}
         </div>
       </header>
+
+      {/* 데이터 준비 상태 (PHASE 16) — 점수 · 판정을 대체하지 않음 */}
+      <details className="rounded-md border px-3 py-2" open={status !== "FINAL"}>
+        <summary className="cursor-pointer text-xs font-semibold">데이터 준비 상태 · 다음에 할 일</summary>
+        <div className="mt-2">
+          <ReadinessList
+            testId="discover-readiness"
+            items={productReadiness({
+              input: p.input,
+              result: r,
+              reviewHistory: p.reviewHistory,
+              scenario: p.primaryScenario ? { hasCalculation: !!calc, netProfitPerUnit: calc?.netProfitPerUnit ?? null, netMarginRate: calc?.netMarginRate ?? null } : null,
+            })}
+          />
+        </div>
+      </details>
 
       {/* 9개 요소 */}
       <div className="overflow-x-auto">

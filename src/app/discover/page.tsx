@@ -5,11 +5,13 @@ import { DataPointValue } from "@/components/common/data-point-value";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { DiscoverProductCard } from "@/components/discover/discover-product-card";
+import { ReadinessList } from "@/components/discover/readiness-list";
 import { NAVER_PROXY_NOTE } from "@/components/keywords/naver-volume-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { findNavItem } from "@/config/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { keywordReadiness } from "@/lib/discover/readiness";
 import { discoverStatus, shortageReasons, sortForDiscover } from "@/lib/discover/summary";
 import { formatNumber, formatPercent, formatWon } from "@/lib/format";
 import { naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
@@ -165,6 +167,19 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
                   </dd>
                 </div>
               </dl>
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold">키워드 데이터 준비 상태</h3>
+                <ReadinessList
+                  testId="discover-keyword-readiness"
+                  items={keywordReadiness({
+                    naverConfigured,
+                    naverLatest: analysis.naver?.latest ? { total: analysis.naver.latest.total, capturedOn: analysis.naver.latest.capturedOn } : null,
+                    naverLastAttempt: analysis.naver?.lastAttempt ?? null,
+                    searchVolume: analysis.keyword.metrics.searchVolume,
+                    coupangSearch: analysis.coupangSearch,
+                  })}
+                />
+              </div>
               {shortages.length > 0 && (
                 <div className="space-y-1" data-testid="discover-shortages">
                   <h3 className="text-sm font-semibold">데이터가 부족한 이유</h3>

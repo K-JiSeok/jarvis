@@ -11,7 +11,7 @@
     "db:types:local": "node scripts/db/gen-types.mjs",
     "db:types": "npx supabase gen types typescript --project-id ogfldnhumdqawcbunehl --schema public > src/types/database.ts",
     "test:profit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/profit/test.mjs",
-    "test:score": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/scoring/test.mjs",
+    "test:score": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/scoring/test.mjs",
     "test:dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/dashboard/test.mjs",
     "test:import": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/import/test.mjs",
     "test:ingest": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ingest/test.mjs",
