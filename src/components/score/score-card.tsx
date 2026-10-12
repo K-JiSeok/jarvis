@@ -17,6 +17,33 @@ const ORIGIN_LABELS: Record<ScoreKeywordOption["origin"], string> = {
 };
 
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
+
+/**
+ * 데이터 준비 상태 (PHASE 14): 요소마다 어떤 종류의 데이터인지 · 데이터가 없을 때 다음에 할 일.
+ * 점수 · 근거 · 사용 값은 엔진 결과(ScoreResult) 그대로다 — 여기서 계산하지 않는다.
+ */
+const FACTOR_DATA_KIND: Record<string, string> = {
+  demand: "검색 수요 — 네이버 검색량 등 대리 지표 (쿠팡 검색량 아님)",
+  salesVolume: "판매량 — 실제 판매량 또는 출처가 확인된 추정 판매량 (집계 기간 필수)",
+  salesGrowth: "판매 성장률 — 7일 이상 간격 · 최근 90일 안의 같은 종류 판매량 이력 2회 이상",
+  competition: "경쟁 — 키워드 경쟁 지표 · 연결한 경쟁상품 가격",
+  wingEntry: "WING 진입 — 키워드 WING 비율 · 연결한 경쟁상품 판매자 유형 3개 이상",
+  reviewBarrier: "리뷰 장벽 — 연결한 경쟁상품 리뷰 · 키워드 평균 리뷰",
+  conversion: "전환율 — 실제 출처가 확인된 값만 (WING 등, 추정하지 않음)",
+  margin: "마진 — 대표 수익성 시나리오",
+  marketStability: "시장 안정성 — 최근 180일 가격 기록 3회 이상",
+};
+const FACTOR_NEXT_ACTION: Record<string, string> = {
+  demand: "키워드 상세에서 네이버 검색량 수집 (API 키 필요) 또는 /import 키워드 데이터로 월 검색량 입력",
+  salesVolume: "/import 상품 데이터로 실제 판매량 또는 추정 판매량 + 집계 기간 입력 (WING 판매분석 · 출처가 확인된 도구)",
+  salesGrowth: "같은 종류 판매량을 7일 이상 간격으로 한 번 더 입력",
+  competition: "상품 상세 \"경쟁상품 후보\"에서 경쟁상품 연결 · 키워드 상품 수 입력",
+  wingEntry: "판매자 유형을 아는 경쟁상품 3개 이상 연결 (쿠팡 상품 페이지 수집) 또는 키워드 WING 비율 입력",
+  reviewBarrier: "경쟁상품 연결 또는 쿠팡 검색 결과 수집 (1페이지 평균 리뷰)",
+  conversion: "WING 등 실제 출처의 전환율을 /import 상품 데이터로 입력 (없으면 비워 둠)",
+  margin: "수익성 계산기에서 대표 시나리오 저장",
+  marketStability: "확장 프로그램으로 날짜를 달리해 가격 수집 (3회 이상)",
+};
 const dateTime = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" });
 
 function InputMeta({ x }: { x: FactorInputRef }) {
@@ -166,12 +193,13 @@ export function ScoreCard({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className="text-muted-foreground border-b text-left text-xs">
-                <th className="py-2 font-normal">항목</th>
+                <th className="py-2 font-normal">항목 (가중치)</th>
                 <th className="py-2 text-right font-normal">점수</th>
-                <th className="py-2 pl-4 font-normal">근거 · 원본 데이터</th>
+                <th className="py-2 pl-4 font-normal">근거 · 원본 데이터 (출처 · 신뢰도 · 수집일)</th>
+                <th className="py-2 pl-4 font-normal">데이터 · 다음 작업</th>
                 {saved && <th className="py-2 text-right font-normal">저장값</th>}
               </tr>
             </thead>
@@ -180,7 +208,9 @@ export function ScoreCard({
                 const savedPts = saved?.factorScores[f.factor];
                 return (
                   <tr key={f.factor} className="border-b align-top last:border-0">
-                    <td className="py-2 font-medium whitespace-nowrap">{f.label}</td>
+                    <td className="py-2 font-medium whitespace-nowrap">
+                      {f.label} <span className="text-muted-foreground text-xs font-normal">({f.weight})</span>
+                    </td>
                     <td className="py-2 text-right whitespace-nowrap tabular-nums">
                       {f.points == null ? (
                         <span className="text-amber-700 dark:text-amber-300">미계산</span>
@@ -209,6 +239,10 @@ export function ScoreCard({
                           </ul>
                         </details>
                       )}
+                    </td>
+                    <td className="max-w-64 py-2 pl-4 text-xs" data-next-action={f.factor}>
+                      <p className="text-muted-foreground">{FACTOR_DATA_KIND[f.factor]}</p>
+                      {f.score == null && <p className="mt-0.5">다음 작업: {FACTOR_NEXT_ACTION[f.factor]}</p>}
                     </td>
                     {saved && (
                       <td className="text-muted-foreground py-2 text-right text-xs tabular-nums">

@@ -152,22 +152,61 @@ function parseSnapshotForm(
   return { snapshot: { keywordId, capturedOn, confidence, metrics, calculated } };
 }
 
-// 네이버 검색광고 API 검색량 (PHASE 13) ------------------------------------------------------
+// 네이버 검색광고 API 검색량 (PHASE 13 → 14) ------------------------------------------------
 
-export async function fetchNaverVolumeAction(keywordId: string, keyword: string, prev: FormState): Promise<FormState> {
-  if (prev.ok && prev.message?.startsWith("요청 중")) return prev;
+const NAVER_SETUP =
+  "네이버 검색광고 API 키가 설정되지 않았습니다. 검색광고 관리자센터 → 도구 → API 사용 관리에서 발급한 값을 .env.local 의 NAVER_SEARCHAD_API_KEY · NAVER_SEARCHAD_SECRET_KEY · NAVER_SEARCHAD_CUSTOMER_ID 에 넣고 서버를 다시 시작하세요. 그 전에는 /import 로 검색량 파일을 넣을 수 있습니다.";
+
+export interface NaverFormState extends FormState {
+  result?: {
+    saved: number;
+    failed: number;
+    skippedToday: number;
+    failures: { keyword: string; label: string }[];
+    outcome: string | null;
+    jobId: string | null;
+    mock: boolean;
+  };
+}
+
+async function runNaver(keywords: string[], force: boolean): Promise<NaverFormState> {
   if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
-  const { collectNaverSearchVolumes, naverSearchAdConfig } = await import("@/lib/ingest/naver-searchad");
-  if (!naverSearchAdConfig()) {
-    return fail("네이버 검색광고 API 키가 설정되지 않았습니다. 키가 생기면 .env.local 에 NAVER_SEARCHAD_API_KEY · NAVER_SEARCHAD_SECRET_KEY · NAVER_SEARCHAD_CUSTOMER_ID 를 넣으세요. 그 전에는 /import 로 검색량 파일을 넣을 수 있습니다.");
-  }
-  try {
-    const r = await collectNaverSearchVolumes([keyword]);
-    revalidatePath(`/keywords/${keywordId}`);
-    if (!r.saved) return fail(r.issues.map((i) => i.message).join(" / ") || "저장할 검색량이 없습니다.");
-    if (!r.saved.ok) return fail("저장 중 오류가 나서 취소했습니다.");
-    return { ok: true, message: `네이버 검색광고 검색량을 저장했습니다 (공식 API · A).${r.issues.length ? ` 참고: ${r.issues.map((i) => i.message).join(" / ")}` : ""}` };
-  } catch (error) {
-    return fail((error as Error).message);
-  }
+  if (keywords.length === 0) return fail("수집할 키워드를 고르세요.");
+  if (keywords.length > 100) return fail("한 번에 최대 100개 키워드까지 수집합니다.");
+  const { collectNaverSearchVolumes } = await import("@/lib/ingest/naver-searchad");
+  const { NAVER_FAILURE_LABELS } = await import("@/lib/collectors/naver/plan");
+  const r = await collectNaverSearchVolumes(keywords, { force });
+  if (r.status === "NOT_CONFIGURED") return fail(NAVER_SETUP);
+  revalidatePath("/keywords", "layout");
+  const result = {
+    saved: r.saved,
+    failed: r.failures.length,
+    skippedToday: r.skippedToday.length,
+    failures: r.failures.map((x) => ({ keyword: x.keyword, label: NAVER_FAILURE_LABELS[x.code] })),
+    outcome: r.outcome,
+    jobId: r.job?.id ?? null,
+    mock: r.mock,
+  };
+  const head = r.mock ? "[개발 모의 서버 — 실제 네이버 아님] " : "";
+  if (r.systemError) return { ok: false, message: `${head}저장 중 오류가 나서 전부 취소했습니다: ${r.systemError}`, result };
+  if (!r.job) return { ok: true, message: `${head}오늘 이미 수집한 키워드라 다시 요청하지 않았습니다 (${r.skippedToday.length}개). 다시 받으려면 "오늘 수집한 키워드도 다시"를 고르세요.`, result };
+  const parts = [`저장 ${result.saved}`, `실패 ${result.failed}`];
+  if (result.skippedToday) parts.push(`오늘 이미 수집해 건너뜀 ${result.skippedToday}`);
+  return { ok: result.failed === 0, message: `${head}네이버 검색량 수집 — ${parts.join(" · ")}`, result };
+}
+
+/** 키워드 상세: 이 키워드만 */
+export async function fetchNaverVolumeAction(keyword: string, _prev: NaverFormState, formData: FormData): Promise<NaverFormState> {
+  return runNaver([keyword], formData.get("force") === "on");
+}
+
+/** 키워드 목록: 체크한 키워드만 (자동 수집 · 연관 키워드 등록 없음) */
+export async function collectSelectedNaverAction(_prev: NaverFormState, formData: FormData): Promise<NaverFormState> {
+  const ids = formData.getAll("keywordIds").map(String);
+  if (ids.length === 0) return fail("수집할 키워드를 고르세요.");
+  const { listKeywordOptions } = await import("@/lib/repositories/keywords");
+  // 등록된 본인 키워드만 (RLS) — 폼에서 온 id 를 그대로 믿지 않는다
+  const own = await listKeywordOptions();
+  const keywords = own.filter((k) => ids.includes(k.id)).map((k) => k.keyword);
+  return runNaver(keywords, formData.get("force") === "on");
 }

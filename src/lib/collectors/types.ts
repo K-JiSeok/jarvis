@@ -109,6 +109,8 @@ export interface CollectedKeyword extends CollectedBase {
   adBid?: Observed;
   /** 평균 · 비율 계산에 쓴 상품 수 (keyword_snapshots.sample_size) */
   sampleSize?: number | null;
+  /** 확인했지만 컬럼이 없는 값 (예: 네이버 PC · 모바일 조회수, 광고 지표) — import_rows.payload 에만 */
+  observedOnly?: Record<string, string | number | null> | null;
 }
 
 export interface NormalizeIssue {

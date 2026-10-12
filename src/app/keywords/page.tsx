@@ -4,11 +4,14 @@ import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { KeywordCreateForm } from "@/components/keywords/keyword-create-form";
 import { KeywordsTable } from "@/components/keywords/keywords-table";
+import { NaverCollectBar } from "@/components/keywords/naver-volume-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { findNavItem } from "@/config/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { isNaverMockBaseUrl, naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
 import { listCategories, listKeywords } from "@/lib/repositories/keywords";
+import { listNaverStatus } from "@/lib/repositories/naver-status";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 
 const nav = findNavItem("/keywords")!;
@@ -27,7 +30,8 @@ export default async function KeywordsPage() {
     );
   }
 
-  const [keywords, categories] = await Promise.all([listKeywords(), listCategories()]);
+  const [keywords, categories, naverStatus] = await Promise.all([listKeywords(), listCategories(), listNaverStatus()]);
+  const naverConfig = naverSearchAdConfig();
   const tracking = keywords.filter((k) => k.isTracking).length;
 
   return (
@@ -51,8 +55,9 @@ export default async function KeywordsPage() {
             없다는 뜻입니다.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <KeywordsTable keywords={keywords} />
+        <CardContent className="space-y-4">
+          <NaverCollectBar configured={naverConfig != null} mock={isNaverMockBaseUrl(naverConfig)} />
+          <KeywordsTable keywords={keywords} naverStatus={naverStatus} />
         </CardContent>
       </Card>
     </>

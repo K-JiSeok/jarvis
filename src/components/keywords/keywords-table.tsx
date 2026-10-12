@@ -4,9 +4,12 @@ import { setTrackingAction } from "@/app/keywords/actions";
 import { DataPointValue } from "@/components/common/data-point-value";
 import { Badge } from "@/components/ui/badge";
 import { formatDecimal, formatNumber, formatPercent, formatShortDate } from "@/lib/format";
+import type { NaverKeywordStatus } from "@/lib/repositories/naver-status";
 import type { KeywordSummary } from "@/types/keyword";
 
-export function KeywordsTable({ keywords }: { keywords: KeywordSummary[] }) {
+const dateTime = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" });
+
+export function KeywordsTable({ keywords, naverStatus }: { keywords: KeywordSummary[]; naverStatus?: Map<string, NaverKeywordStatus> }) {
   if (keywords.length === 0) {
     return <p className="text-muted-foreground py-6 text-center text-sm">등록된 키워드가 없습니다.</p>;
   }
@@ -16,6 +19,7 @@ export function KeywordsTable({ keywords }: { keywords: KeywordSummary[] }) {
       <table className="w-full min-w-[880px] text-sm">
         <thead>
           <tr className="text-muted-foreground border-b text-left text-xs">
+            <th className="w-8 py-2 pr-2 font-medium" title="네이버 검색량 수집 대상">선택</th>
             <th className="py-2 pr-3 font-medium">키워드</th>
             <th className="py-2 pr-3 font-medium">카테고리</th>
             <th className="py-2 pr-3 text-right font-medium">월 검색량</th>
@@ -24,12 +28,17 @@ export function KeywordsTable({ keywords }: { keywords: KeywordSummary[] }) {
             <th className="py-2 pr-3 text-right font-medium">WING</th>
             <th className="py-2 pr-3 text-right font-medium">로켓</th>
             <th className="py-2 pr-3 font-medium">최근 수집</th>
+            <th className="py-2 pr-3 font-medium">네이버 마지막 수집</th>
             <th className="py-2 font-medium">추적</th>
           </tr>
         </thead>
         <tbody>
           {keywords.map((k) => (
             <tr key={k.id} className={k.isTracking ? "border-b last:border-0" : "text-muted-foreground border-b last:border-0"}>
+              <td className="py-2.5 pr-2">
+                {/* 표 밖의 "naver-collect" 폼에 붙는다 (행 안의 추적 폼과 겹치지 않게) */}
+                <input type="checkbox" name="keywordIds" value={k.id} form="naver-collect" aria-label={`${k.keyword} 선택`} className="size-4" />
+              </td>
               <td className="py-2.5 pr-3 font-medium">
                 <Link href={`/keywords/${k.id}`} className="hover:underline">
                   {k.keyword}
@@ -52,6 +61,9 @@ export function KeywordsTable({ keywords }: { keywords: KeywordSummary[] }) {
                 <DataPointValue point={k.metrics.rocketRatio} format={(v) => formatPercent(v)} className="items-end" />
               </td>
               <td className="py-2.5 pr-3 text-xs tabular-nums">{formatShortDate(k.latestCapturedOn)}</td>
+              <td className="py-2.5 pr-3 text-xs" data-naver-last={k.id}>
+                <NaverLast status={naverStatus?.get(k.id)} />
+              </td>
               <td className="py-2.5">
                 <form action={setTrackingAction.bind(null, k.id, !k.isTracking)}>
                   <button type="submit" title={k.isTracking ? "추적 중지" : "추적 재개"}>
@@ -64,5 +76,16 @@ export function KeywordsTable({ keywords }: { keywords: KeywordSummary[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function NaverLast({ status }: { status: NaverKeywordStatus | undefined }) {
+  const a = status?.lastAttempt;
+  if (!a) return <span className="text-muted-foreground">-</span>;
+  return (
+    <span className="tabular-nums">
+      {dateTime.format(new Date(a.at))}{" "}
+      {a.ok ? <span className="text-emerald-700 dark:text-emerald-300">성공</span> : <span className="text-destructive" title={a.label ?? ""}>실패</span>}
+    </span>
   );
 }

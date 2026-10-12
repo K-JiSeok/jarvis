@@ -34,6 +34,14 @@ const mappingFrom = (type, headers) => Object.fromEntries(autoMatch(type, header
 const tableOf = (csv) => toTable(parseCsv(csv));
 
 // CSV ---------------------------------------------------------------------------------------
+test("Mapping", "판매량 헤더: '판매량'은 실제/추정 선택 필요 · '판매량집계기간'(필드 이름 그대로) 자동 인식 (PHASE 14)", () => {
+  const m = autoMatch("PRODUCT_SNAPSHOTS", ["쿠팡상품ID", "수집일", "판매량", "판매량집계기간", "실제판매량", "추정판매량"]);
+  assert.equal(m[2].status, "AMBIGUOUS");
+  assert.deepEqual(m[2].candidates, ["sales_actual", "sales_estimated"]);
+  assert.equal(m[3].field, "sales_period_days");
+  assert.equal(m[4].field, "sales_actual");
+  assert.equal(m[5].field, "sales_estimated");
+});
 test("CSV", "따옴표 안의 쉼표·줄바꿈·\"\" 처리, CRLF", () => {
   const rows = parseCsv('a,b,c\r\n"1,000","줄\n바꿈","그는 ""네"" 했다"\r\n');
   assert.deepEqual(rows, [["a", "b", "c"], ["1,000", "줄\n바꿈", '그는 "네" 했다']]);

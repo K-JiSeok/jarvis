@@ -228,6 +228,50 @@ test("Naver", "응답 → 키워드 스냅샷: PC+모바일 · OFFICIAL_API A ·
   assert.equal(issues.length, 2);
 });
 
+// Naver 수집 계획 (PHASE 14) — 실제 네이버 호출 없음 (모의 응답)
+const { classifyNaverHttp, chunkKeywords, keywordsToCollect, planNaverResults } = await import("../../src/lib/collectors/naver/plan.ts");
+test("Naver", "HTTP 실패 구분: 401·403 인증(중단) · 429/1016 제한(중단) · 그 밖 API 오류(계속)", () => {
+  assert.deepEqual(classifyNaverHttp(401, ""), { code: "NAVER_AUTH", stop: true });
+  assert.deepEqual(classifyNaverHttp(403, "{}"), { code: "NAVER_AUTH", stop: true });
+  assert.deepEqual(classifyNaverHttp(429, ""), { code: "NAVER_RATE_LIMIT", stop: true });
+  assert.deepEqual(classifyNaverHttp(400, '{"code":1016,"title":"너무 많은 접속"}'), { code: "NAVER_RATE_LIMIT", stop: true });
+  assert.deepEqual(classifyNaverHttp(500, "oops"), { code: "NAVER_API_ERROR", stop: false });
+  assert.deepEqual(classifyNaverHttp(500, "code 10160"), { code: "NAVER_API_ERROR", stop: false });
+});
+test("Naver", "5개씩 묶기 · 같은 날 중복 수집 방지 (수동 재시도면 다시)", () => {
+  assert.deepEqual(chunkKeywords(["a", "b", "c", "d", "e", "f", "g"]).map((c) => c.length), [5, 2]);
+  const last = { 캠핑의자: "2026-10-12", 거치대: "2026-10-11" };
+  assert.deepEqual(keywordsToCollect(["캠핑의자", "거치대", "새키워드"], last, "2026-10-12", false), { collect: ["거치대", "새키워드"], skippedToday: ["캠핑의자"] });
+  assert.deepEqual(keywordsToCollect(["캠핑의자", "거치대"], last, "2026-10-12", true), { collect: ["캠핑의자", "거치대"], skippedToday: [] });
+});
+test("Naver", "묶음 결과 → 저장 · 실패: 정상 · <10 · 응답에 없음 · 묶음 실패(인증) · 이전 값 있음/없음 · PC/모바일 보존", () => {
+  const chunks = [
+    {
+      keywords: ["캠핑 의자", "거치대", "희귀", "없는키워드"],
+      ok: true,
+      list: [
+        { relKeyword: "캠핑의자", monthlyPcQcCnt: "2,000", monthlyMobileQcCnt: "8,000", compIdx: "높음", monthlyAvePcClkCnt: "12.5" },
+        { relKeyword: "거치대", monthlyPcQcCnt: 300, monthlyMobileQcCnt: 900 },
+        { relKeyword: "희귀", monthlyPcQcCnt: "< 10", monthlyMobileQcCnt: "40" },
+        { relKeyword: "연관키워드", monthlyPcQcCnt: "5", monthlyMobileQcCnt: "5" },
+      ],
+    },
+    { keywords: ["인증실패1", "인증실패2"], ok: false, code: "NAVER_AUTH", message: "인증 실패 (HTTP 401)" },
+  ];
+  const { records, failures } = planNaverResults(chunks, "2026-10-12T01:00:00Z", { "캠핑 의자": 8929 });
+  assert.deepEqual(records.map((r) => [r.keyword, r.searchVolume, r.searchVolumePrevious]), [["캠핑 의자", 10000, 8929], ["거치대", 1200, null]]);
+  assert.deepEqual(records[0].observedOnly.pcQueries, 2000);
+  assert.deepEqual(records[0].observedOnly.mobileQueries, 8000);
+  assert.deepEqual(failures.map((f) => [f.keyword, f.code]), [["희귀", "NAVER_BELOW_10"], ["없는키워드", "NAVER_NOT_IN_RESPONSE"], ["인증실패1", "NAVER_AUTH"], ["인증실패2", "NAVER_AUTH"]]);
+  // 연관 키워드("연관키워드")는 저장 대상에도 실패에도 없다 (자동 등록 없음)
+  assert.equal([...records, ...failures].some((x) => x.keyword === "연관키워드"), false);
+  const withPrev = normalizeKeyword(records[0]).record;
+  assert.equal(withPrev.source, "OFFICIAL_API");
+  assert.equal(withPrev.confidence, "A");
+  assert.equal(withPrev.metrics.search_growth_rate, Math.round(((10000 - 8929) / 8929) * 10000) / 10000);
+  assert.equal(normalizeKeyword(records[1]).record.metrics.search_growth_rate, undefined);
+});
+
 let total = 0;
 let passed = 0;
 for (const [group, tests] of Object.entries(groups)) {

@@ -97,7 +97,7 @@ export const FIELDS: Record<ImportType, FieldDef[]> = {
       ambiguous: SALES_AMBIGUOUS,
       hint: "외부 도구·역산한 추정치",
     },
-    { key: "sales_period_days", label: "판매량 집계 기간(일)", kind: "int", aliases: ["salesperioddays", "집계기간", "판매기간", "기간일수", "기간"] },
+    { key: "sales_period_days", label: "판매량 집계 기간(일)", kind: "int", aliases: ["salesperioddays", "집계기간", "판매기간", "기간일수", "기간", "판매량집계기간", "판매량집계기간일"] },
     { key: "revenue_actual", label: "실제 매출", kind: "money", aliases: ["revenueactual", "실제매출"], ambiguous: REVENUE_AMBIGUOUS },
     { key: "revenue_estimated", label: "추정 매출", kind: "money", aliases: ["revenueestimated", "추정매출", "예상매출"], ambiguous: REVENUE_AMBIGUOUS },
     { key: "conversion_rate", label: "전환율", kind: "ratio", aliases: ["conversionrate", "전환율", "구매전환율"] },

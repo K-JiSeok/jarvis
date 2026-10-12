@@ -18,7 +18,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { formatDecimal, formatNumber, formatPercent, formatShortDate, formatSignedPercent, formatWon } from "@/lib/format";
 import { getKeywordDetail, listCategories } from "@/lib/repositories/keywords";
 import { listRanksForKeyword } from "@/lib/repositories/ranks";
-import { naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
+import { isNaverMockBaseUrl, naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
+import { listNaverStatus } from "@/lib/repositories/naver-status";
 import { listSearchObservations } from "@/lib/repositories/search-observations";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import type { DataPoint } from "@/types/common";
@@ -60,7 +61,8 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
   const [keyword, categories, ranks] = await Promise.all([getKeywordDetail(id), listCategories(), listRanksForKeyword(id)]);
   // RLS: 다른 사용자의 키워드는 조회되지 않으므로 존재하지 않는 것과 같다
   if (!keyword) notFound();
-  const observations = await listSearchObservations(keyword.keyword);
+  const [observations, naverStatus] = await Promise.all([listSearchObservations(keyword.keyword), listNaverStatus([keyword.id])]);
+  const naverConfig = naverSearchAdConfig();
 
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 
@@ -122,7 +124,7 @@ export default async function KeywordDetailPage({ params }: PageProps<"/keywords
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <NaverVolumeForm keywordId={keyword.id} keyword={keyword.keyword} configured={naverSearchAdConfig() != null} />
+          <NaverVolumeForm keyword={keyword.keyword} configured={naverConfig != null} mock={isNaverMockBaseUrl(naverConfig)} status={naverStatus.get(keyword.id) ?? null} />
         </CardContent>
       </Card>
 
