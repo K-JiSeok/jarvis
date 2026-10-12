@@ -1,5 +1,6 @@
 import {
   Calculator,
+  Compass,
   FolderTree,
   LayoutDashboard,
   Package,
@@ -27,6 +28,13 @@ export const NAV_ITEMS: NavItem[] = [
     icon: LayoutDashboard,
     description: "실제 데이터 현황 · 추천 상품 · 분석 상태",
     plannedPhase: 8,
+  },
+  {
+    href: "/discover",
+    label: "상품 발굴",
+    icon: Compass,
+    description: "키워드별 판매 후보 종합 분석 (Score V1 · 수익성 · 부족한 데이터)",
+    plannedPhase: 15,
   },
   {
     href: "/keywords",

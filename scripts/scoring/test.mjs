@@ -360,6 +360,51 @@ test("PHASE 13 가격 기록 2회 · 경쟁상품 판매자 유형 2개면 안�
   assert.equal(s.wingEntry, null);
 });
 
+// PHASE 15 상품 발굴 정리 — V1 결과를 분류 · 정렬만 (점수 · 판정을 새로 만들지 않음)
+const { discoverStatus, sortForDiscover, shortageReasons } = await import("../../src/lib/discover/summary.ts");
+const emptyInput = () => ({
+  asOf: "2026-10-12",
+  product: { id: "e", name: "빈 상품", metrics: null },
+  keyword: null,
+  competitors: [],
+  salesHistory: { actual: [], estimated: [] },
+  priceHistory: [],
+  margin: null,
+});
+test("PHASE 15 상품 발굴: 최종(9/9) · 잠정(일부) · 분석 불가(0) 구분, 최종만 V1 판정 · 기준 80/60 유지", () => {
+  const final = calculateOpportunityScore(best(), config);
+  const partial = calculateOpportunityScore(p13({ searchVolume: dp(10000) }, P13_COMPETITORS), config);
+  const none = calculateOpportunityScore(emptyInput(), config);
+  assert.equal(discoverStatus(final), "FINAL");
+  assert.equal(final.verdict, final.total >= 80 ? "STRONG_BUY" : final.total >= 60 ? "REVIEW" : "EXCLUDE");
+  assert.equal(discoverStatus(partial), "PROVISIONAL");
+  assert.equal(partial.verdict, null);
+  assert.equal(partial.total, null);
+  assert.equal(discoverStatus(none), "INSUFFICIENT");
+  assert.ok(none.factors.every((f) => f.score === null && f.points === null)); // 0점으로 채우지 않음
+});
+test("PHASE 15 상품 발굴 정렬: 최종(총점 순) → 잠정(계산 요소 수 · 확보 점수 순) → 분석 불가, 아무것도 빼지 않음", () => {
+  const items = [
+    { productName: "빈", preview: calculateOpportunityScore(emptyInput(), config) },
+    { productName: "잠정-수요없음", preview: calculateOpportunityScore(p13({}, []), config) },
+    { productName: "최종", preview: calculateOpportunityScore(best(), config) },
+    { productName: "잠정-수요있음", preview: calculateOpportunityScore(p13({ searchVolume: dp(10000) }, P13_COMPETITORS), config) },
+  ];
+  assert.deepEqual(sortForDiscover(items).map((x) => x.productName), ["최종", "잠정-수요있음", "잠정-수요없음", "빈"]);
+});
+test("PHASE 15 데이터 부족 이유: 검색량(키 없음 · 수집 실패 · 미수집) · 판매량 · 성장 · 전환율 · 가격 · 리뷰", () => {
+  const products = [{ preview: calculateOpportunityScore(p13({}, []), config) }, { preview: calculateOpportunityScore(emptyInput(), config) }];
+  const noKey = shortageReasons({ hasSearchVolume: false, naverConfigured: false, naverLastAttempt: null, products });
+  assert.match(noKey[0].reason, /API 키가 설정되지 않았/);
+  assert.match(noKey[0].reason, /대리 지표/);
+  assert.deepEqual(noKey.map((x) => x.area), ["검색량", "판매량", "판매 성장", "전환율", "가격", "리뷰"]);
+  assert.match(noKey.find((x) => x.area === "판매량").reason, /^2\/2개/);
+  assert.match(noKey.find((x) => x.area === "가격").reason, /^1\/2개/);
+  const failed = shortageReasons({ hasSearchVolume: false, naverConfigured: true, naverLastAttempt: { ok: false, label: "인증 실패" }, products: [] });
+  assert.match(failed[0].reason, /마지막 수집이 실패.*인증 실패/);
+  assert.equal(shortageReasons({ hasSearchVolume: true, naverConfigured: true, naverLastAttempt: null, products: [] }).length, 0);
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {
