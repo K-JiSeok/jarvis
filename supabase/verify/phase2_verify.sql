@@ -77,7 +77,8 @@ declare
     'categories', 'keywords', 'keyword_snapshots', 'products', 'product_snapshots',
     'keyword_product_ranks', 'competitors', 'profit_scenarios', 'profit_calculations',
     'scoring_versions', 'opportunity_scores', 'product_risks', 'watchlist', 'watchlist_events',
-    'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows'];
+    'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
+    'automation_runs', 'keyword_candidates', 'product_compliance'];
   v_owner_tables text[] := array_remove(v_expected, 'scoring_versions');
   v_actual text[];
   v_n integer;
@@ -85,7 +86,7 @@ declare
 begin
   select array_agg(tablename::text order by tablename) into v_actual
   from pg_tables where schemaname = 'public';
-  perform pg_temp.jv_assert('S01 테이블 19개',
+  perform pg_temp.jv_assert('S01 테이블 22개 (PHASE 17 자동 발굴 3개 포함)',
     v_actual = (select array_agg(x order by x) from unnest(v_expected) x),
     format('actual: %s', v_actual));
 
@@ -102,7 +103,7 @@ begin
 
   select count(*) into v_n from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity;
-  perform pg_temp.jv_assert('S04 RLS 활성화 19개', v_n = 19, format('%s', v_n));
+  perform pg_temp.jv_assert('S04 RLS 활성화 22개', v_n = 22, format('%s', v_n));
 
   foreach t in array v_owner_tables loop
     select count(*) into v_n from pg_policies
@@ -112,7 +113,7 @@ begin
       raise exception 'FAIL S05 owner 정책: % 에 정책 %개', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('S05 owner_id 정책 18개 테이블 × 4 (select/insert/update/delete)');
+  perform pg_temp.jv_pass('S05 owner_id 정책 21개 테이블 × 4 (select/insert/update/delete)');
 
   select count(*) into v_n from pg_policies where schemaname = 'public' and tablename = 'scoring_versions';
   perform pg_temp.jv_assert('S06 scoring_versions 정책 = SELECT 1개', v_n = 1
@@ -1430,6 +1431,55 @@ select pg_temp.jv_expect_error('RG06 상품 101개 → 54000',
   $q$select public.register_products_and_ingest(null, (select jsonb_agg(jsonb_build_object('coupang_product_id', i::text)) from generate_series(1, 101) i), '{"channel": "EXTENSION", "import_type": "MIXED", "source_type": "COUPANG_PAGE"}', '[]')$q$, '54000');
 
 -- ===========================================================================
+-- AU. PHASE 17 자동 발굴 (사용자 A)
+-- ===========================================================================
+do $$
+declare
+  v_run uuid;
+begin
+  insert into public.automation_runs (triggered_by) values ('MANUAL') returning id into v_run;
+  perform pg_temp.jv_set('au_run', v_run::text);
+  perform pg_temp.jv_assert('AU01 실행 기록 owner = A · RUNNING · finished_at 없음',
+    (select owner_id = pg_temp.jv('user_a') and status = 'RUNNING' and finished_at is null from public.automation_runs where id = v_run));
+
+  insert into public.keyword_candidates (keyword, normalized_keyword, source_type, source_tool, seed_keyword_id, seed_keyword, monthly_pc, monthly_mobile, search_volume, last_seen_on, run_id)
+  values ('실리콘 얼음틀', '실리콘 얼음틀', 'OFFICIAL_API', 'naver-searchad/keywordstool', pg_temp.jv('kw'), '시드', 120, 440, 560, '2026-10-12', v_run);
+  perform pg_temp.jv_assert('AU02 키워드 후보 저장 (공식 API · 시드 · 실행 연결)',
+    (select count(*) = 1 from public.keyword_candidates where run_id = v_run and source_type = 'OFFICIAL_API'));
+
+  insert into public.product_compliance (product_id, status, findings, decided_by, rule_version)
+  values (pg_temp.jv('p1'), 'REQUIRES_CERTIFICATION', '[{"area": "CERTIFICATION", "status": "REQUIRES_CERTIFICATION"}]', 'AUTO', 'compliance-rules-v1');
+  perform pg_temp.jv_assert('AU03 판매 가능성 자동 판단 저장 (상품당 1행)',
+    (select count(*) = 1 from public.product_compliance where product_id = pg_temp.jv('p1')));
+end;
+$$;
+
+select pg_temp.jv_expect_error('AU04 같은 사용자 두 번째 RUNNING 실행 → 23505 (중복 실행 방지)',
+  $q$insert into public.automation_runs (triggered_by) values ('EXTENSION_ALARM')$q$, '23505');
+select pg_temp.jv_expect_error('AU05 RUNNING 인데 finished_at 있음 → 23514',
+  $q$update public.automation_runs set finished_at = now() where id = pg_temp.jv('au_run')$q$, '23514');
+select pg_temp.jv_expect_error('AU06 자동 판단이 BLOCKED 를 만들 수 없음 → 23514',
+  $q$update public.product_compliance set status = 'BLOCKED' where product_id = pg_temp.jv('p1')$q$, '23514');
+select pg_temp.jv_expect_error('AU07 자동 판단이 CLEARED 를 만들 수 없음 → 23514',
+  $q$update public.product_compliance set status = 'CLEARED' where product_id = pg_temp.jv('p1')$q$, '23514');
+select pg_temp.jv_expect_error('AU08 10 미만 후보에 검색량 숫자 → 23514 (NULL 유지)',
+  $q$insert into public.keyword_candidates (keyword, normalized_keyword, source_type, source_tool, seed_keyword, below_10, search_volume, last_seen_on) values ('x', 'x', 'OFFICIAL_API', 't', 's', true, 0, '2026-10-12')$q$, '23514');
+select pg_temp.jv_expect_error('AU09 같은 후보 키워드 중복 → 23505',
+  $q$insert into public.keyword_candidates (keyword, normalized_keyword, source_type, source_tool, seed_keyword, last_seen_on) values ('실리콘 얼음틀', '실리콘 얼음틀', 'OFFICIAL_API', 't', 's', '2026-10-12')$q$, '23505');
+
+do $$
+begin
+  update public.product_compliance set status = 'BLOCKED', decided_by = 'USER', user_note = '검증' where product_id = pg_temp.jv('p1');
+  perform pg_temp.jv_assert('AU10 사용자 판단은 BLOCKED 가능 · updated_at 갱신',
+    (select status = 'BLOCKED' and decided_by = 'USER' and updated_at >= created_at from public.product_compliance where product_id = pg_temp.jv('p1')));
+  update public.automation_runs set status = 'SUCCEEDED', finished_at = now() where id = pg_temp.jv('au_run');
+  insert into public.automation_runs (triggered_by, status, finished_at) values ('EXTENSION_ALARM', 'PARTIAL', now());
+  perform pg_temp.jv_assert('AU11 끝난 실행 뒤에는 새 실행 가능',
+    (select count(*) = 2 from public.automation_runs));
+end;
+$$;
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1444,13 +1494,14 @@ begin
     'keyword_product_ranks', 'competitors', 'profit_scenarios', 'profit_calculations',
     'opportunity_scores', 'product_risks', 'watchlist', 'watchlist_events',
     'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
+    'automation_runs', 'keyword_candidates', 'product_compliance',
     'v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual'] loop
     execute format('select count(*) from public.%I', t) into v_n;
     if v_n <> 0 then
       raise exception 'FAIL B01: B 가 % 에서 A 의 행 %개를 봄', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('B01 SELECT 차단 (18개 테이블 + 4개 뷰)');
+  perform pg_temp.jv_pass('B01 SELECT 차단 (21개 테이블 + 4개 뷰)');
 
   update public.products set product_name = 'hacked';
   get diagnostics v_n = row_count;
@@ -1485,6 +1536,10 @@ select pg_temp.jv_expect_error('B13 A 의 기존 상품 스냅샷 (날짜·출�
 select pg_temp.jv_expect_error('B14 A 의 기존 키워드 스냅샷 대상 UPSERT → 권한 오류',
   format($q$select public.upsert_keyword_snapshot('{"keyword_id": "%s", "captured_on": "2026-10-06", "captured_at": "2026-10-06T23:00:00+09:00", "source_type": "EXTENSION", "confidence": "C", "search_volume": 1}')$q$, pg_temp.jv('kw')),
   '42501');
+select pg_temp.jv_expect_error('AU12 복합 FK: B 의 판매 가능성 판단이 A 의 상품을 참조 불가',
+  format($q$insert into public.product_compliance (product_id, status, decided_by) values ('%s', 'UNKNOWN', 'AUTO')$q$, pg_temp.jv('p1')), '23503');
+select pg_temp.jv_expect_error('AU13 B 는 A 의 실행 기록에 후보를 연결할 수 없음 (복합 FK)',
+  format($q$insert into public.keyword_candidates (keyword, normalized_keyword, source_type, source_tool, seed_keyword, last_seen_on, run_id) values ('y', 'y', 'OFFICIAL_API', 't', 's', '2026-10-12', '%s')$q$, pg_temp.jv('au_run')), '23503');
 select pg_temp.jv_expect_error('B09 복합 FK: B 의 관심상품이 A 의 상품을 참조 불가',
   format($q$insert into public.watchlist (product_id) values ('%s')$q$, pg_temp.jv('p1')), '23503');
 select pg_temp.jv_expect_error('B10 B 는 A 의 import 를 롤백할 수 없음 (not found)',

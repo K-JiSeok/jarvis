@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4hVvzMaM8xzNJ94Oxfh8APy29U/Fs5dMR6482PAGAsNzLCX9dyqCv7DCmVWo/E4GmbFT631CfK88B4itAssde5tes6Sv8jL/Sk1y8WI415JIW1M0DrKqeZ7GbSg1D5K1idJFsBj3jGVuV2be5hmlM8SR1KQBJbeoJD1UgVGI++rRnZYH8nf+Xt7Fc2jRHsF8EYeNXxwP7fhzQ6TmuOyHK9z3FC0b6C7dfoak7XJtyna+lE2gWTylfFbAPWUqWivC/ghnTiZRyYm553Qzz4xXOyzSijod4+hqqGydMzwUjs2RdBBxy+XT//p/UJaFPMdgRZi9i9YTVimCv4AidigSWwIDAQAB",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "alarms"],
   "host_permissions": ["https://www.coupang.com/*", "https://wing.coupang.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_title": "JARVIS", "default_popup": "popup.html" },

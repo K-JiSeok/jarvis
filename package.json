@@ -15,6 +15,7 @@
     "test:dashboard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/dashboard/test.mjs",
     "test:import": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/import/test.mjs",
     "test:ingest": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ingest/test.mjs",
+    "test:automation": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/automation/test.mjs",
     "ext:build": "node scripts/extension/build.mjs",
     "test:extension": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/extension/test.mjs"
   },

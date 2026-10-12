@@ -54,7 +54,8 @@ test("Extension", "manifest key → 고정 확장 프로그램 ID (서버 CORS �
 });
 test("Extension", "Manifest V3 · 최소 권한 (쿠키 · 네트워크 가로채기 · 모든 사이트 권한 없음)", () => {
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions, ["storage", "activeTab"]);
+  // alarms (PHASE 17): 예약 자동 발굴 알람 — 탭 · 네트워크 · 사이트 권한이 아니다
+  assert.deepEqual(manifest.permissions, ["storage", "activeTab", "alarms"]);
   const all = JSON.stringify(manifest);
   for (const bad of ["cookies", "webRequest", "declarativeNetRequest", "<all_urls>", "debugger", "scripting", "tabs\""]) assert.ok(!all.includes(bad), bad);
   assert.deepEqual(manifest.host_permissions, ["https://www.coupang.com/*", "https://wing.coupang.com/*"]);
@@ -62,6 +63,12 @@ test("Extension", "Manifest V3 · 최소 권한 (쿠키 · 네트워크 가로�
     manifest.content_scripts.map((c) => c.matches[0]),
     ["https://www.coupang.com/vp/products/*", "https://www.coupang.com/np/search*", "https://wing.coupang.com/*"],
   );
+});
+test("Extension", "예약 자동 발굴은 JARVIS 서버만 부른다 (쿠팡 탭 열기 · 쿠팡 요청 없음)", () => {
+  const bg = readFileSync(join(root, "extension", "dist", "background.js"), "utf8");
+  assert.ok(bg.includes("/api/automation/run"), "자동 실행 경로");
+  assert.ok(bg.includes("jarvis-auto-discovery"), "알람 이름");
+  for (const bad of ["tabs.create", "tabs.update", "windows.create", "coupang.com"]) assert.ok(!bg.includes(bad), bad);
 });
 test("Extension", "빌드 결과물에 service role 키 없음 · 공개 키만", () => {
   const dist = join(root, "extension", "dist");

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { DataPointValue } from "@/components/common/data-point-value";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
+import { AutomationPanel } from "@/components/discover/automation-panel";
 import { DiscoverProductCard } from "@/components/discover/discover-product-card";
 import { ReadinessList } from "@/components/discover/readiness-list";
 import { NAVER_PROXY_NOTE } from "@/components/keywords/naver-volume-form";
@@ -15,8 +16,10 @@ import { keywordReadiness } from "@/lib/discover/readiness";
 import { discoverStatus, shortageReasons, sortForDiscover } from "@/lib/discover/summary";
 import { formatNumber, formatPercent, formatWon } from "@/lib/format";
 import { naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
+import { listAutomationRuns, listCompliance, listKeywordCandidates } from "@/lib/repositories/automation";
 import { DISCOVER_MAX_PRODUCTS, getDiscoverAnalysis } from "@/lib/repositories/discover";
 import { listKeywords } from "@/lib/repositories/keywords";
+import { listProducts } from "@/lib/repositories/products";
 import { listNaverStatus } from "@/lib/repositories/naver-status";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { cn } from "@/lib/utils";
@@ -45,8 +48,21 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   const sp = await searchParams;
   const kw = typeof sp.kw === "string" && UUID.test(sp.kw) ? sp.kw : null;
   const naverConfigured = naverSearchAdConfig() != null;
-  const [keywords, naverStatus, analysis] = await Promise.all([listKeywords(), listNaverStatus(), kw ? getDiscoverAnalysis(kw) : null]);
-  const products = analysis ? sortForDiscover(analysis.products) : [];
+  const [keywords, naverStatus, analysis, runs, candidates, compliance, allProducts] = await Promise.all([
+    listKeywords(),
+    listNaverStatus(),
+    kw ? getDiscoverAnalysis(kw) : null,
+    listAutomationRuns(5),
+    listKeywordCandidates({ limit: 30 }),
+    listCompliance(),
+    listProducts(),
+  ]);
+  const sorted = analysis ? sortForDiscover(analysis.products) : [];
+  // 판매 불가(사용자 확인) 상품은 일반 후보에서 빼고 아래에 사유와 함께 따로 둔다 (기록 유지)
+  const excluded = sorted.filter((p) => compliance.get(p.id)?.status === "BLOCKED");
+  const products = sorted.filter((p) => compliance.get(p.id)?.status !== "BLOCKED");
+  const complianceCounts: Record<string, number> = {};
+  for (const c of compliance.values()) complianceCounts[c.status] = (complianceCounts[c.status] ?? 0) + 1;
   const counts = { FINAL: 0, PROVISIONAL: 0, INSUFFICIENT: 0 };
   for (const p of products) counts[discoverStatus(p.preview)] += 1;
   const shortages = analysis
@@ -61,6 +77,13 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   return (
     <>
       <PageHeader title={nav.label} description={nav.description} actions={<Badge>LIVE</Badge>} />
+
+      <AutomationPanel
+        runs={runs}
+        candidates={candidates}
+        totals={{ products: allProducts.length, compliance: complianceCounts, unscreened: allProducts.filter((p) => !compliance.has(p.id)).length }}
+        naverConfigured={naverConfigured}
+      />
 
       <Card>
         <CardHeader>
@@ -210,7 +233,15 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
                   이 키워드와 연결된 등록 상품이 없습니다. 쿠팡에서 이 키워드를 검색한 뒤 확장 프로그램 패널에서 후보 상품을 골라 등록하세요.
                 </p>
               ) : (
-                products.map((p) => <DiscoverProductCard key={p.id} p={p} />)
+                products.map((p) => <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} />)
+              )}
+              {excluded.length > 0 && (
+                <div className="space-y-2" data-testid="discover-excluded">
+                  <h3 className="text-sm font-semibold">판매 불가로 제외된 상품 ({excluded.length}) — 사용자 확인</h3>
+                  {excluded.map((p) => (
+                    <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} />
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>

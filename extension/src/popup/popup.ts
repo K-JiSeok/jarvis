@@ -1,6 +1,6 @@
 /** 팝업: 로그인 · 현재 페이지 상태 · [현재 페이지 수집] · 마지막 결과 */
 
-import { PAGE_LABELS, type DetectResponse, type LastRun, type Message } from "../shared/types";
+import { PAGE_LABELS, type DetectResponse, type LastAuto, type LastRun, type Message } from "../shared/types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -82,7 +82,7 @@ function renderLast(run: LastRun | null) {
 }
 
 async function refresh() {
-  const status = await send<{ loggedIn: boolean; email: string | null; apiBase: string; lastRun: LastRun | null }>({ type: "jarvis:status" });
+  const status = await send<{ loggedIn: boolean; email: string | null; apiBase: string; lastRun: LastRun | null; lastAuto: LastAuto | null }>({ type: "jarvis:status" });
   apiBase = status.apiBase;
   const conn = $("conn");
   conn.textContent = status.loggedIn ? "● 연결됨" : "● 로그인 필요";
@@ -93,6 +93,11 @@ async function refresh() {
   if (!status.loggedIn) return;
 
   renderLast(status.lastRun);
+  if (status.lastAuto) {
+    const a = status.lastAuto;
+    $("auto").textContent = `${new Date(a.at).toLocaleString("ko-KR")} · ${a.status} · ${a.message}`;
+    $("auto").className = a.ok ? "muted" : "error";
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   tabId = tab?.id ?? null;
   const d = await activeTabMessage<DetectResponse>({ type: "jarvis:detect" });

@@ -51,7 +51,7 @@ export interface DiscoverAnalysis {
   totalLinked: number;
 }
 
-export async function getDiscoverAnalysis(keywordId: string): Promise<DiscoverAnalysis | null> {
+export async function getDiscoverAnalysis(keywordId: string, { limit = DISCOVER_MAX_PRODUCTS }: { limit?: number } = {}): Promise<DiscoverAnalysis | null> {
   const keyword = await getKeywordDetail(keywordId);
   if (!keyword) return null;
   const supabase = await createClient();
@@ -96,7 +96,7 @@ export async function getDiscoverAnalysis(keywordId: string): Promise<DiscoverAn
     const db = rb?.capturedOn === latestDate ? 0 : 1;
     return da - db || (ra?.organic ?? 9999) - (rb?.organic ?? 9999);
   });
-  const picked = ids.slice(0, DISCOVER_MAX_PRODUCTS);
+  const picked = ids.slice(0, limit);
   if (picked.length === 0) return { keyword, naver: naver.get(keywordId) ?? null, coupangSearch, products: [], totalLinked: 0 };
 
   const [{ data: masters, error }, { data: reviewRows, error: reviewError }] = await Promise.all([

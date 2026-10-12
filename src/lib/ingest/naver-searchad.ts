@@ -80,6 +80,16 @@ async function fetchChunk(config: NaverSearchAdConfig, keywords: string[]): Prom
   return { keywords, ok: true, list: json.keywordList };
 }
 
+/**
+ * 연관 키워드 (PHASE 17 자동 발굴): 시드 1개를 hintKeywords 로 보내고 응답 keywordList 전체를 돌려준다.
+ * 시드마다 따로 보낸다 — 여러 시드를 한 번에 보내면 어느 시드의 연관 키워드인지 알 수 없다. 키 · 서명 · 오류 분류는 검색량 수집과 같다.
+ */
+export async function fetchRelatedKeywords(seed: string): Promise<{ status: "NOT_CONFIGURED" } | { status: "DONE"; mock: boolean; result: ChunkResult }> {
+  const config = naverSearchAdConfig();
+  if (!config) return { status: "NOT_CONFIGURED" };
+  return { status: "DONE", mock: isNaverMockBaseUrl(config), result: await fetchChunk(config, [seed]) };
+}
+
 /** 키워드별 가장 최근 공식 API 수집일 · 25~40일 전 검색량 */
 async function officialHistory(keywords: string[], today: string) {
   const supabase = await createClient();

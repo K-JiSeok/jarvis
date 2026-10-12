@@ -135,3 +135,24 @@ export type Message =
   | { type: "jarvis:run" }
   | { type: "jarvis:lookup"; keyword: string | null; coupangProductIds: string[] }
   | { type: "jarvis:register"; input: RegisterInput; counts: CollectCounts; summary: string[] };
+
+/** 예약 자동 발굴 (chrome.alarms → /api/automation/run) 마지막 결과 — PHASE 17 */
+export interface LastAuto {
+  at: string;
+  ok: boolean;
+  /** SUCCEEDED · PARTIAL · FAILED · SKIPPED(20시간 안 · 실행 중) · NOT_LOGGED_IN · OFFLINE */
+  status: string;
+  message: string;
+  runId?: string | null;
+}
+
+export interface AutomationResult {
+  ok: boolean;
+  error?: string;
+  skipped?: boolean;
+  reason?: string;
+  message?: string;
+  runId?: string | null;
+  status?: string;
+  steps?: { name: string; status: string; error: string | null }[];
+}

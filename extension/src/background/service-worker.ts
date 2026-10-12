@@ -2,12 +2,51 @@
  * 배경 서비스 워커: 로그인 · 전송 · 마지막 결과 저장.
  * 콘텐츠 스크립트와 팝업은 서버에 직접 요청하지 않고 이곳에 메시지를 보낸다 (토큰은 이곳에서만 쓴다).
  * 다른 탭 이동 · 다음 페이지 · 자동 수집은 하지 않는다 — 사용자가 누른 버튼 1번 = 전송 1번.
+ *
+ * 예약 자동 발굴 (PHASE 17): chrome.alarms 가 1시간마다 깨어나 JARVIS 서버의 /api/automation/run 만 부른다.
+ *   쿠팡 탭을 열거나 쿠팡에 요청하지 않는다. 서버는 마지막 실행 뒤 20시간 안이면 건너뛰므로 실제 실행은 하루 1회.
+ *   Chrome 이 켜져 있고 · 확장 프로그램에 로그인돼 있고 · JARVIS 서버가 켜져 있을 때만 실행된다.
  */
 
-import { login, logout, lookup, registerSelected, sendRaw, sendRecords, validSession } from "../shared/api";
+import { login, logout, lookup, registerSelected, runAutomation, sendRaw, sendRecords, validSession } from "../shared/api";
 import { JARVIS_API_BASE, JARVIS_DEV } from "../shared/constants";
-import { getLastRun, setLastRun } from "../shared/storage";
+import { getLastAuto, getLastRun, setLastAuto, setLastRun } from "../shared/storage";
 import type { LastRun, Message } from "../shared/types";
+
+const AUTO_ALARM = "jarvis-auto-discovery";
+
+async function ensureAlarm() {
+  if (!(await chrome.alarms.get(AUTO_ALARM))) await chrome.alarms.create(AUTO_ALARM, { delayInMinutes: 1, periodInMinutes: 60 });
+}
+chrome.runtime.onInstalled.addListener(() => void ensureAlarm());
+chrome.runtime.onStartup.addListener(() => void ensureAlarm());
+void ensureAlarm();
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== AUTO_ALARM) return;
+  void (async () => {
+    const at = new Date().toISOString();
+    if (!(await validSession())) {
+      await setLastAuto({ at, ok: false, status: "NOT_LOGGED_IN", message: "확장 프로그램에 로그인하지 않아 예약 실행을 하지 않았습니다." });
+      return;
+    }
+    const r = await runAutomation();
+    if (r.skipped) {
+      // 20시간 안 · 실행 중이면 마지막 실제 실행 기록을 덮지 않는다
+      const prev = await getLastAuto();
+      if (!prev || prev.status === "NOT_LOGGED_IN" || prev.status === "OFFLINE") await setLastAuto({ at, ok: true, status: "SKIPPED", message: r.message ?? "건너뜀", runId: r.runId ?? null });
+      return;
+    }
+    const failed = (r.steps ?? []).filter((s) => s.status === "FAILED").map((s) => s.name);
+    await setLastAuto({
+      at,
+      ok: r.ok,
+      status: r.status ?? (r.ok ? "SUCCEEDED" : "OFFLINE"),
+      message: r.error ?? (failed.length ? `실패 단계: ${failed.join(", ")}` : "자동 발굴 완료"),
+      runId: r.runId ?? null,
+    });
+  })();
+});
 
 chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
   // 이 확장 프로그램의 팝업 · 콘텐츠 스크립트에서 온 메시지만 받는다
@@ -19,7 +58,7 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
     switch (message.type) {
       case "jarvis:status": {
         const session = await validSession();
-        return { loggedIn: !!session, email: session?.email ?? null, apiBase: JARVIS_API_BASE, lastRun: await getLastRun() };
+        return { loggedIn: !!session, email: session?.email ?? null, apiBase: JARVIS_API_BASE, lastRun: await getLastRun(), lastAuto: await getLastAuto() };
       }
       case "jarvis:login":
         try {

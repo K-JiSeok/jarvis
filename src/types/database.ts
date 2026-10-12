@@ -1,5 +1,5 @@
 // ⚠️ 자동 생성 파일 — 직접 수정하지 않는다.
-// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0012 적용 후)
+// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0019 (PHASE 17 automation_pipeline 포함) 적용 후)
 // 다시 만들기: npm run db:types (supabase gen types) — 로컬 대안: npm run db:types:local
 //
 // DB 레벨 원시 타입이다. DOMAIN(source_type_t 등)은 string 으로 나온다.
@@ -21,6 +21,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      automation_runs: {
+        Row: {
+          created_at: string
+          error: string | null
+          finished_at: string | null
+          id: string
+          owner_id: string
+          started_at: string
+          status: string
+          steps: Json
+          summary: Json
+          triggered_by: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          owner_id?: string
+          started_at?: string
+          status?: string
+          steps?: Json
+          summary?: Json
+          triggered_by: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          owner_id?: string
+          started_at?: string
+          status?: string
+          steps?: Json
+          summary?: Json
+          triggered_by?: string
+        }
+        Relationships: []
+      }
       categories: {
         Row: {
           coupang_category_id: string | null
@@ -293,6 +332,111 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "import_jobs"
             referencedColumns: ["owner_id", "id"]
+          },
+        ]
+      }
+      keyword_candidates: {
+        Row: {
+          below_10: boolean
+          comp_idx: string | null
+          first_seen_at: string
+          id: string
+          keyword: string
+          last_seen_at: string
+          last_seen_on: string
+          monthly_mobile: number | null
+          monthly_pc: number | null
+          normalized_keyword: string
+          owner_id: string
+          promoted_keyword_id: string | null
+          run_id: string | null
+          search_volume: number | null
+          seed_keyword: string
+          seed_keyword_id: string | null
+          seen_count: number
+          source_tool: string
+          source_type: string
+          status: string
+        }
+        Insert: {
+          below_10?: boolean
+          comp_idx?: string | null
+          first_seen_at?: string
+          id?: string
+          keyword: string
+          last_seen_at?: string
+          last_seen_on: string
+          monthly_mobile?: number | null
+          monthly_pc?: number | null
+          normalized_keyword: string
+          owner_id?: string
+          promoted_keyword_id?: string | null
+          run_id?: string | null
+          search_volume?: number | null
+          seed_keyword: string
+          seed_keyword_id?: string | null
+          seen_count?: number
+          source_tool: string
+          source_type: string
+          status?: string
+        }
+        Update: {
+          below_10?: boolean
+          comp_idx?: string | null
+          first_seen_at?: string
+          id?: string
+          keyword?: string
+          last_seen_at?: string
+          last_seen_on?: string
+          monthly_mobile?: number | null
+          monthly_pc?: number | null
+          normalized_keyword?: string
+          owner_id?: string
+          promoted_keyword_id?: string | null
+          run_id?: string | null
+          search_volume?: number | null
+          seed_keyword?: string
+          seed_keyword_id?: string | null
+          seen_count?: number
+          source_tool?: string
+          source_type?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "keyword_candidates_promoted_fk"
+            columns: ["owner_id", "promoted_keyword_id"]
+            isOneToOne: false
+            referencedRelation: "keywords"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "keyword_candidates_promoted_fk"
+            columns: ["owner_id", "promoted_keyword_id"]
+            isOneToOne: false
+            referencedRelation: "v_keyword_latest"
+            referencedColumns: ["owner_id", "keyword_id"]
+          },
+          {
+            foreignKeyName: "keyword_candidates_run_fk"
+            columns: ["owner_id", "run_id"]
+            isOneToOne: false
+            referencedRelation: "automation_runs"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "keyword_candidates_seed_fk"
+            columns: ["owner_id", "seed_keyword_id"]
+            isOneToOne: false
+            referencedRelation: "keywords"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "keyword_candidates_seed_fk"
+            columns: ["owner_id", "seed_keyword_id"]
+            isOneToOne: false
+            referencedRelation: "v_keyword_latest"
+            referencedColumns: ["owner_id", "keyword_id"]
           },
         ]
       }
@@ -858,6 +1002,63 @@ export type Database = {
           },
         ]
       }
+      product_compliance: {
+        Row: {
+          checked_at: string
+          created_at: string
+          decided_by: string
+          findings: Json
+          id: string
+          owner_id: string
+          product_id: string
+          rule_version: string | null
+          status: string
+          updated_at: string
+          user_note: string | null
+        }
+        Insert: {
+          checked_at?: string
+          created_at?: string
+          decided_by: string
+          findings?: Json
+          id?: string
+          owner_id?: string
+          product_id: string
+          rule_version?: string | null
+          status: string
+          updated_at?: string
+          user_note?: string | null
+        }
+        Update: {
+          checked_at?: string
+          created_at?: string
+          decided_by?: string
+          findings?: Json
+          id?: string
+          owner_id?: string
+          product_id?: string
+          rule_version?: string | null
+          status?: string
+          updated_at?: string
+          user_note?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_compliance_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: true
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "product_compliance_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: true
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
+      }
       product_risks: {
         Row: {
           created_at: string
@@ -1131,7 +1332,6 @@ export type Database = {
         Row: {
           ad_cost_amount: number | null
           break_even_price: number | null
-
           break_even_units: number | null
           calculated_at: string
           coupang_fee_amount: number | null
@@ -1152,7 +1352,6 @@ export type Database = {
         Insert: {
           ad_cost_amount?: number | null
           break_even_price?: number | null
-
           break_even_units?: number | null
           calculated_at?: string
           coupang_fee_amount?: number | null
@@ -1173,7 +1372,6 @@ export type Database = {
         Update: {
           ad_cost_amount?: number | null
           break_even_price?: number | null
-
           break_even_units?: number | null
           calculated_at?: string
           coupang_fee_amount?: number | null

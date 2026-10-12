@@ -8,7 +8,7 @@
 
 import { EXT_TOOL, EXT_VERSION, JARVIS_API_BASE, SUPABASE_ANON_KEY, SUPABASE_URL } from "./constants";
 import { getSession, setSession, type StoredSession } from "./storage";
-import type { IngestRecord, IngestResult, LookupResult, RegisterInput, RegisterResult } from "./types";
+import type { AutomationResult, IngestRecord, IngestResult, LookupResult, RegisterInput, RegisterResult } from "./types";
 
 interface TokenResponse {
   access_token: string;
@@ -123,6 +123,11 @@ export function sendRecords(records: IngestRecord[]): Promise<IngestResult> {
 /** 검색 결과 상품 · 키워드 등록 여부 (/api/extension/lookup, 읽기 전용) */
 export function lookup(keyword: string | null, coupangProductIds: string[]): Promise<LookupResult> {
   return postApi<LookupResult>("/api/extension/lookup", JSON.stringify({ keyword, coupangProductIds }));
+}
+
+/** 예약 자동 발굴 실행 요청 (/api/automation/run, PHASE 17). 서버가 중복 실행 · 20시간 간격을 막는다 */
+export function runAutomation(): Promise<AutomationResult> {
+  return postApi<AutomationResult>("/api/automation/run", JSON.stringify({ trigger: "EXTENSION_ALARM" }));
 }
 
 /** 선택 상품 등록 + 저장 (/api/extension/register). 요청 1번 = idempotencyKey 1개 */

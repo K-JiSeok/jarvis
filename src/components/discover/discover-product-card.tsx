@@ -3,9 +3,13 @@ import Link from "next/link";
 import { VerdictBadge } from "@/components/common/score-badge";
 import { SourceBadge } from "@/components/common/source-badge";
 import { Badge } from "@/components/ui/badge";
+import { AREA_LABELS, COMPLIANCE_LABELS } from "@/lib/automation/compliance";
 import { productReadiness } from "@/lib/discover/readiness";
+import type { ComplianceView } from "@/lib/repositories/automation";
 import { discoverStatus } from "@/lib/discover/summary";
 
+import { ComplianceForm } from "./automation-forms";
+import { ComplianceBadge } from "./automation-panel";
 import { ReadinessList } from "./readiness-list";
 import { formatPercent, formatShortDate, formatWon } from "@/lib/format";
 import type { DiscoverOrigin, DiscoverProduct } from "@/lib/repositories/discover";
@@ -18,7 +22,7 @@ const LEVEL_LABELS = { LOW: "낮음", MEDIUM: "보통", HIGH: "높음" } as cons
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
 
 /** 상품 1개 분석 카드 — 값은 모두 Score Engine V1 결과 · 기존 Profit 계산 결과 그대로 */
-export function DiscoverProductCard({ p }: { p: DiscoverProduct }) {
+export function DiscoverProductCard({ p, compliance = null }: { p: DiscoverProduct; compliance?: ComplianceView | null }) {
   const r = p.preview;
   const status = discoverStatus(r);
   const calc = p.primaryScenario?.current ?? null;
@@ -45,6 +49,7 @@ export function DiscoverProductCard({ p }: { p: DiscoverProduct }) {
             )}{" "}
             · {p.origins.map((o) => ORIGIN_LABELS[o]).join(" · ")}
           </p>
+          <ComplianceBadge status={compliance?.status ?? null} decidedBy={compliance?.decidedBy ?? null} />
         </div>
         <div className="text-right" data-testid="discover-verdict">
           {status === "FINAL" ? (
@@ -66,6 +71,40 @@ export function DiscoverProductCard({ p }: { p: DiscoverProduct }) {
           )}
         </div>
       </header>
+
+      {/* 판매 가능성 사전 검토 (PHASE 17) — 점수와 별도, 법률 판단 · 쿠팡 승인 아님 */}
+      <details className="rounded-md border px-3 py-2" data-testid="discover-compliance">
+        <summary className="cursor-pointer text-xs font-semibold">
+          판매 가능성 · 인증 · 브랜드 · 공급 {compliance ? `— ${COMPLIANCE_LABELS[compliance.status]}` : "— 미검토 (다음 자동 실행에서 검토)"}
+        </summary>
+        <div className="mt-2 space-y-2 text-xs">
+          {compliance && (
+            <ul className="space-y-1">
+              {compliance.findings.map((f, i) => (
+                <li key={i} className="rounded border px-2 py-1" data-finding={f.rule}>
+                  <strong>{AREA_LABELS[f.area] ?? f.area}</strong> · {COMPLIANCE_LABELS[f.status]} · {f.method === "USER" ? "사용자" : "자동"} ({f.checkedAt.slice(0, 10)})
+                  <br />
+                  근거: {f.evidence}
+                  {f.source !== "-" && (
+                    <>
+                      <br />
+                      확인할 규정: {f.source}
+                    </>
+                  )}
+                  {f.action !== "-" && (
+                    <>
+                      <br />
+                      할 일: {f.action}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-muted-foreground">자동 검토는 상품명 · 카테고리로 확인할 규정의 가능성만 표시합니다. 판매 불가 · 확인 완료는 근거를 확인한 뒤 직접 정합니다.</p>
+          <ComplianceForm productId={p.id} />
+        </div>
+      </details>
 
       {/* 데이터 준비 상태 (PHASE 16) — 점수 · 판정을 대체하지 않음 */}
       <details className="rounded-md border px-3 py-2" open={status !== "FINAL"}>
