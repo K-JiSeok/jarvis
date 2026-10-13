@@ -25,26 +25,32 @@ export interface EstimateView {
   opportunity: Opportunity;
   economics: UnitEconomics | null;
   categoryPath: string | null;
+  /** 최근 누적 리뷰 수 (수집 우선순위용) */
+  reviewCount: number | null;
 }
 
 export async function loadEstimates(productIds: string[], details: Map<string, { result: DetailResult }> = new Map()): Promise<Map<string, EstimateView>> {
   const out = new Map<string, EstimateView>();
   if (productIds.length === 0) return out;
   const supabase = await createClient();
-  const [ctx, cards, { data: prods }, { data: snaps }, { data: rows }] = await Promise.all([
+  const [ctx, cards, { data: prods }, { data: snaps }, { data: rows }, { data: latest }] = await Promise.all([
     productContexts(productIds),
     listRateCards(),
-    supabase.from("products").select("id, coupang_product_id").in("id", productIds),
-    supabase.from("product_snapshots").select("product_id, captured_on, review_count, is_excluded").in("product_id", productIds).not("review_count", "is", null).order("captured_on").limit(10000),
+    // 상품이 수백 개면 .in(ids) 주소가 16KB 를 넘는다 → 사용자 전체(RLS)를 읽고 아래에서 거른다
+    supabase.from("products").select("id, coupang_product_id").limit(20000),
+    supabase.from("product_snapshots").select("product_id, captured_on, review_count, is_excluded").not("review_count", "is", null).order("captured_on").limit(50000),
     supabase
       .from("import_rows")
       .select("record_key, created_at, mb:payload->collected->observedOnly->>monthlyBuyers, rd:payload->collected->observedOnly->>reviewDates, cap:payload->collected->>capturedAt")
       .like("record_key", "product\\_snapshot:%")
       .or("payload->collected->observedOnly->>monthlyBuyers.not.is.null,payload->collected->observedOnly->>reviewDates.not.is.null")
       .order("created_at", { ascending: false })
-      .limit(5000),
+      .limit(20000),
+    supabase.from("v_product_latest").select("product_id, review_count").limit(20000),
   ]);
-  const idByCoupang = new Map((prods ?? []).map((p) => [p.coupang_product_id, p.id]));
+  const reviewsOf = new Map((latest ?? []).map((l) => [l.product_id, l.review_count]));
+  const wanted = new Set(productIds);
+  const idByCoupang = new Map((prods ?? []).filter((p) => wanted.has(p.id)).map((p) => [p.coupang_product_id, p.id]));
   const hist = new Map<string, Map<string, number>>();
   for (const s of snaps ?? []) {
     if (s.is_excluded || s.review_count == null) continue;
@@ -77,7 +83,7 @@ export async function loadEstimates(productIds: string[], details: Map<string, {
     const g = guessCategory(p.name, p.categoryPath);
     const opportunity = estimateOpportunity({ today, price: p.salePrice, sales, cards, salesScope: g.salesScope, feeGroup: g.feeGroup, detail: details.get(id)?.result ?? null });
     const economics = p.salePrice != null ? unitEconomics({ today, price: p.salePrice, cards, salesScope: g.salesScope, feeGroup: g.feeGroup }) : null;
-    out.set(id, { productId: id, productName: p.name, price: p.salePrice, sales, opportunity, economics, categoryPath: p.categoryPath });
+    out.set(id, { productId: id, productName: p.name, price: p.salePrice, sales, opportunity, economics, categoryPath: p.categoryPath, reviewCount: reviewsOf.get(id) ?? null });
   }
   return out;
 }

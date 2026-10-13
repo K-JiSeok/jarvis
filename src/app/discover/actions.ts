@@ -8,6 +8,7 @@ import { runDiscoveryPipeline } from "@/lib/automation/pipeline";
 import { dbErrorMessage, fail, isPgError, type FormState } from "@/lib/forms";
 import { keywordFilter } from "@/lib/automation/keyword-filter";
 import { createKeyword, findKeywordIdByText } from "@/lib/repositories/keywords";
+import { setPickStatus } from "@/lib/repositories/picks";
 import { linkOffer } from "@/lib/repositories/sourcing";
 import { addToWatchlist, getWatchlistForProduct, releaseFromWatchlist, updateWatchlistStatus } from "@/lib/repositories/watchlist";
 import { createClient } from "@/lib/supabase/server";
@@ -236,4 +237,29 @@ export async function promoteTopCandidatesAction(_prev: FormState, formData: For
   revalidatePath("/discover");
   const skipTxt = skipped.length ? ` · 건너뜀 ${skipped.length}개: ${skipped.slice(0, 10).join(", ")}` : "";
   return { ok: done.length > 0, message: done.length ? `${done.length}개를 추적 키워드로 등록했습니다: ${done.join(", ")}. 다음 자동 실행부터 검색량 · 연관 키워드를 모읍니다.${skipTxt}` : `등록할 후보가 없습니다.${skipTxt}` };
+}
+
+/** 오늘의 추천 응답 (PHASE 24): [후보로 선택] = 관심상품 WATCHING(기존 단계) + 추천 상태 SHORTLISTED / [관심 없음] = DISMISSED */
+export async function respondPickAction(pickId: string, keywordId: string | null, _prev: FormState, formData: FormData): Promise<FormState> {
+  if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
+  const op = String(formData.get("op") ?? "");
+  try {
+    if (op === "SHORTLIST") {
+      const r = await setPickStatus(pickId, "SHORTLISTED");
+      if (!r) return fail("추천을 찾을 수 없습니다.");
+      await addToWatchlist(r.productId, keywordId);
+      revalidatePath("/discover");
+      revalidatePath("/watchlist");
+      return { ok: true, message: "후보로 선택했습니다 — [소싱 시작]을 누르면 공급 후보 · 원가 계산 대상이 됩니다." };
+    }
+    if (op === "DISMISS") {
+      const r = await setPickStatus(pickId, "DISMISSED");
+      if (!r) return fail("추천을 찾을 수 없습니다.");
+      revalidatePath("/discover");
+      return { ok: true, message: "관심 없음으로 표시했습니다 (다음 추천에서 14일간 빠집니다)." };
+    }
+    return fail("알 수 없는 작업입니다.");
+  } catch (error) {
+    return fail(dbErrorMessage(error));
+  }
 }

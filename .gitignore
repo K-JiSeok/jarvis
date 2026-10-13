@@ -24,3 +24,6 @@ next-env.d.ts
 
 # JARVIS 확장 프로그램 빌드 결과 (npm run ext:build 로 다시 만든다)
 /extension/dist
+
+# 매일 오전 추천 작업 중간 파일 (PHASE 24)
+/scripts/picks/out/

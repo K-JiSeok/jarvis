@@ -81,7 +81,8 @@ declare
     'automation_runs', 'keyword_candidates', 'product_compliance',
     'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates',
     'supply_cost_snapshots',
-    'cost_rate_cards', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations'];
+    'cost_rate_cards', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations',
+    'daily_picks'];
   v_owner_tables text[] := array_remove(v_expected, 'scoring_versions');
   v_actual text[];
   v_n integer;
@@ -89,7 +90,7 @@ declare
 begin
   select array_agg(tablename::text order by tablename) into v_actual
   from pg_tables where schemaname = 'public';
-  perform pg_temp.jv_assert('S01 테이블 32개 (PHASE 17 자동 발굴 3 · PHASE 18 소싱 5 · PHASE 19 원가 이력 1 · PHASE 20 상세 원가 4 포함)',
+  perform pg_temp.jv_assert('S01 테이블 33개 (PHASE 17 자동 발굴 3 · PHASE 18 소싱 5 · PHASE 19 원가 이력 1 · PHASE 20 상세 원가 4 · PHASE 24 추천 1 포함)',
     v_actual = (select array_agg(x order by x) from unnest(v_expected) x),
     format('actual: %s', v_actual));
 
@@ -106,7 +107,7 @@ begin
 
   select count(*) into v_n from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity;
-  perform pg_temp.jv_assert('S04 RLS 활성화 32개', v_n = 32, format('%s', v_n));
+  perform pg_temp.jv_assert('S04 RLS 활성화 33개', v_n = 33, format('%s', v_n));
 
   foreach t in array v_owner_tables loop
     select count(*) into v_n from pg_policies
@@ -116,7 +117,7 @@ begin
       raise exception 'FAIL S05 owner 정책: % 에 정책 %개', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('S05 owner_id 정책 31개 테이블 × 4 (select/insert/update/delete)');
+  perform pg_temp.jv_pass('S05 owner_id 정책 32개 테이블 × 4 (select/insert/update/delete)');
 
   select count(*) into v_n from pg_policies where schemaname = 'public' and tablename = 'scoring_versions';
   perform pg_temp.jv_assert('S06 scoring_versions 정책 = SELECT 1개', v_n = 1
@@ -1581,6 +1582,21 @@ select pg_temp.jv_expect_error('CD10 비용 설정은 사용자당 1행 → 2350
 select pg_temp.jv_expect_error('CD11 판매자 할인 ≥ 판매가 → 23514',
   $q$update public.product_cost_inputs set sale_price = 1000, seller_discount = 1000 where product_id = pg_temp.jv('p1')$q$, '23514');
 
+-- ===========================================================================
+-- DP. PHASE 24 매일 오전 추천 (사용자 A)
+-- ===========================================================================
+do $$
+begin
+  insert into public.daily_picks (pick_date, rank, product_id, title, reason, picked_by)
+  values ('2026-10-14', 1, pg_temp.jv('p1'), '[TEST] 추천', '[TEST] 근거', 'CLAUDE_SCHEDULED');
+  perform pg_temp.jv_assert('DP01 추천 저장 (owner = A, status NEW)',
+    (select owner_id = pg_temp.jv('user_a') and status = 'NEW' from public.daily_picks where title = '[TEST] 추천'));
+end;
+$$;
+select pg_temp.jv_expect_error('DP02 같은 날 같은 순위 중복 → 23505',
+  $q$insert into public.daily_picks (pick_date, rank, product_id, title, reason, picked_by) values ('2026-10-14', 1, pg_temp.jv('p1'), 'x', 'x', 'RULE')$q$, '23505');
+select pg_temp.jv_expect_error('DP03 순위는 1~3 → 23514',
+  $q$insert into public.daily_picks (pick_date, rank, product_id, title, reason, picked_by) values ('2026-10-14', 4, pg_temp.jv('p1'), 'x', 'x', 'RULE')$q$, '23514');
 select pg_temp.jv_expect_error('SP07 잘못된 매칭 판정 값 → 23514',
   $q$update public.product_supply_links set match_level = 'SAME' where offer_id = pg_temp.jv('sp_offer')$q$, '23514');
 
@@ -1601,14 +1617,14 @@ begin
     'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
     'automation_runs', 'keyword_candidates', 'product_compliance',
     'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates',
-    'supply_cost_snapshots', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations',
+    'supply_cost_snapshots', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations', 'daily_picks',
     'v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual'] loop
     execute format('select count(*) from public.%I', t) into v_n;
     if v_n <> 0 then
       raise exception 'FAIL B01: B 가 % 에서 A 의 행 %개를 봄', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('B01 SELECT 차단 (30개 테이블 + 4개 뷰)');
+  perform pg_temp.jv_pass('B01 SELECT 차단 (31개 테이블 + 4개 뷰)');
 
   perform pg_temp.jv_assert('CD12 B 는 시스템 요율만 보고 A 의 요율 행은 못 봄',
     (select count(*) = 25 from public.cost_rate_cards) and not exists (select 1 from public.cost_rate_cards where owner_id is not null));
@@ -1660,6 +1676,8 @@ select pg_temp.jv_expect_error('CD14 복합 FK: B 는 A 의 상품에 상세 원
 select pg_temp.jv_expect_error('CD15 복합 FK: B 는 A 의 상품에 비용 입력을 넣을 수 없음',
   format($q$insert into public.product_cost_inputs (product_id) values ('%s')$q$, pg_temp.jv('p1')), '23503');
 
+select pg_temp.jv_expect_error('DP04 복합 FK: B 는 A 의 상품을 추천으로 저장할 수 없음',
+  format($q$insert into public.daily_picks (pick_date, rank, product_id, title, reason, picked_by) values ('2026-10-15', 1, '%s', 'x', 'x', 'RULE')$q$, pg_temp.jv('p1')), '23503');
 select pg_temp.jv_expect_error('SP08 복합 FK: B 는 A 의 상품에 공급 후보를 연결할 수 없음',
   format($q$insert into public.product_supply_links (product_id, offer_id, origin, match_level) values ('%s', '%s', 'USER', 'UNCLEAR')$q$, pg_temp.jv('p1'), pg_temp.jv('sp_offer')), '23503');
 select pg_temp.jv_expect_error('SP09 복합 FK: B 는 A 의 공급 후보에 가격 이력을 넣을 수 없음',

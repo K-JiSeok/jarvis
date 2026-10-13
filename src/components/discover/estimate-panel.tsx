@@ -15,7 +15,11 @@ const num = (n: number) => n.toLocaleString("ko-KR");
 export function EstimatePanel({ rows, coupangIdOf }: { rows: EstimateView[]; coupangIdOf: Map<string, string> }) {
   const ranked = [...rows].sort((a, b) => (b.opportunity.rankKey ?? -1) - (a.opportunity.rankKey ?? -1));
   const withSales = ranked.filter((r) => r.sales.monthly);
-  const without = ranked.filter((r) => !r.sales.monthly);
+  // 판매량 미추정 상품: 수집할 가치가 큰 것부터 (가격 구조 적정 → 주의 → 저가, 같은 등급이면 누적 리뷰 많은 순)
+  const gradeOrder = { OK: 0, CAUTION: 1, AVOID: 2 } as const;
+  const without = ranked
+    .filter((r) => !r.sales.monthly)
+    .sort((a, b) => (gradeOrder[a.economics?.grade ?? "AVOID"] - gradeOrder[b.economics?.grade ?? "AVOID"]) || (b.reviewCount ?? 0) - (a.reviewCount ?? 0));
   // 저가(단품 비추천)는 순위 표에서 빼고 아래에 묶음 시나리오와 따로 보여 준다
   const main = withSales.filter((r) => r.economics?.grade !== "AVOID");
   const lowPrice = withSales.filter((r) => r.economics?.grade === "AVOID");
@@ -149,7 +153,7 @@ function CollectChecklist({ rows, coupangIdOf }: { rows: EstimateView[]; coupang
   if (rows.length === 0) return null;
   return (
     <section className="space-y-1" data-testid="collect-checklist">
-      <h3 className="text-sm font-semibold">오늘 수집할 상품 페이지 (판매량 추정용)</h3>
+      <h3 className="text-sm font-semibold">오늘 수집할 상품 페이지 (판매량 추정용 — 가격 구조 좋고 리뷰 많은 순)</h3>
       <p className="text-muted-foreground text-xs">링크를 열고 → 리뷰 목록에서 [최신순] → 확장 프로그램 [JARVIS 수집]. 자동으로 열거나 누르지 않습니다.</p>
       <ul className="grid gap-1 text-xs sm:grid-cols-2">
         {rows.map((r) => (

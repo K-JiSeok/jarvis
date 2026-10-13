@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/common/page-header";
 import { AutomationPanel } from "@/components/discover/automation-panel";
 import { StagePanel, type ScopeItem } from "@/components/discover/stage-panel";
 import { BroadenPanel, EstimatePanel } from "@/components/discover/estimate-panel";
+import { PicksPanel } from "@/components/discover/picks-panel";
+import { listDailyPicks } from "@/lib/repositories/picks";
 import { loadEstimates } from "@/lib/repositories/estimates";
 import { createClient } from "@/lib/supabase/server";
 import { productStage, stageCounts } from "@/lib/discover/stage";
@@ -73,9 +75,10 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   const [sourcing, details] = await Promise.all([listSourcing(sorted.map((p) => p.id)), loadDetails(scopeIds)]);
   // 추정 판매 (PHASE 22): 전체 상품 — 판매량 추정 · 원가 상한 (Score V1 과 별개)
   const supa = await createClient();
-  const [estimates, { data: rankDays }] = await Promise.all([
+  const [estimates, { data: rankDays }, picks] = await Promise.all([
     loadEstimates(allProducts.map((p) => p.id), details),
     supa.from("keyword_product_ranks").select("keyword_id, captured_on").order("captured_on", { ascending: false }).limit(5000),
+    listDailyPicks(14),
   ]);
   const lastCollectedOf = new Map<string, string>();
   for (const r of rankDays ?? []) if (!lastCollectedOf.has(r.keyword_id)) lastCollectedOf.set(r.keyword_id, r.captured_on);
@@ -114,6 +117,8 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
         totals={{ products: allProducts.length, compliance: complianceCounts, unscreened: allProducts.filter((p) => !compliance.has(p.id)).length }}
         naverConfigured={naverConfigured}
       />
+
+      <PicksPanel picks={picks} today={new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date())} />
 
       <EstimatePanel rows={[...estimates.values()]} coupangIdOf={new Map(allProducts.map((p) => [p.id, p.coupangProductId]))} />
 

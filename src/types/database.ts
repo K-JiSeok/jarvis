@@ -1,5 +1,5 @@
 // ⚠️ 자동 생성 파일 — 직접 수정하지 않는다.
-// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0024 (PHASE 20 cost_rate_cards · cost_settings · product_cost_inputs · product_cost_calculations 포함) 적용 후)
+// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0025 (PHASE 24 daily_picks 포함) 적용 후)
 // 다시 만들기: npm run db:types (supabase gen types) — 로컬 대안: npm run db:types:local
 //
 // DB 레벨 원시 타입이다. DOMAIN(source_type_t 등)은 string 으로 나온다.
@@ -278,6 +278,72 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      daily_picks: {
+        Row: {
+          created_at: string
+          id: string
+          metrics: Json
+          owner_id: string
+          pick_date: string
+          picked_by: string
+          product_id: string
+          rank: number
+          reason: string
+          risks: string[]
+          sourcing: Json
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          metrics?: Json
+          owner_id?: string
+          pick_date: string
+          picked_by: string
+          product_id: string
+          rank: number
+          reason: string
+          risks?: string[]
+          sourcing?: Json
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          metrics?: Json
+          owner_id?: string
+          pick_date?: string
+          picked_by?: string
+          product_id?: string
+          rank?: number
+          reason?: string
+          risks?: string[]
+          sourcing?: Json
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_picks_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "daily_picks_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
       }
       fx_rates: {
         Row: {

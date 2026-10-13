@@ -74,13 +74,18 @@ export async function latestKeywordRanks(productIds: string[]): Promise<Map<stri
   if (productIds.length === 0) return result;
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("keyword_product_ranks")
-    .select(RANK_SELECT)
-    .in("product_id", productIds)
-    .eq("is_ad", false)
-    .order("captured_on", { ascending: false });
-  if (error) throw error;
+  // 상품이 100개를 넘으면 .in(ids) 요청 주소가 16KB 한도를 넘는다 (상품 492개에서 실제 발생) → 100개씩 나눠 조회
+  const data: Parameters<typeof toKeywordRankView>[0][] = [];
+  for (let i = 0; i < productIds.length; i += 100) {
+    const { data: part, error } = await supabase
+      .from("keyword_product_ranks")
+      .select(RANK_SELECT)
+      .in("product_id", productIds.slice(i, i + 100))
+      .eq("is_ad", false)
+      .order("captured_on", { ascending: false });
+    if (error) throw error;
+    data.push(...part);
+  }
 
   const byProduct = new Map<string, KeywordRankView[]>();
   for (const rank of data.map(toKeywordRankView)) {

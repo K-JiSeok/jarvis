@@ -148,7 +148,8 @@ export interface ProductCtx {
 export async function productContexts(ids?: string[]): Promise<Map<string, ProductCtx>> {
   const supabase = await createClient();
   let pq = supabase.from("products").select("id, coupang_product_id, product_name, category_id");
-  if (ids) pq = pq.in("id", ids);
+  // 100개 이하만 주소에 넣는다 (그보다 많으면 전체를 읽고 아래에서 거름 — 요청 주소 16KB 한도)
+  if (ids && ids.length <= 100) pq = pq.in("id", ids);
   const [{ data: prods, error }, { data: latest }, { data: cats }, { data: catRows }] = await Promise.all([
     pq,
     supabase.from("v_product_latest").select("product_id, price"),
@@ -169,8 +170,9 @@ export async function productContexts(ids?: string[]): Promise<Map<string, Produ
     const cid = c.record_key?.split(":")[1];
     if (cid && typeof c.category === "string" && !catOf.has(cid)) catOf.set(cid, c.category);
   }
+  const wanted = ids ? new Set(ids) : null;
   return new Map(
-    prods.map((p) => [
+    prods.filter((p) => !wanted || wanted.has(p.id)).map((p) => [
       p.id,
       {
         id: p.id,
