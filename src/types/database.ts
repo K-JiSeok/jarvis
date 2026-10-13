@@ -1,5 +1,5 @@
 // ⚠️ 자동 생성 파일 — 직접 수정하지 않는다.
-// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0020 (PHASE 18 supply_sourcing 포함) 적용 후)
+// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0022 (PHASE 19 supply_cost_snapshots 포함) 적용 후)
 // 다시 만들기: npm run db:types (supabase gen types) — 로컬 대안: npm run db:types:local
 //
 // DB 레벨 원시 타입이다. DOMAIN(source_type_t 등)은 string 으로 나온다.
@@ -1793,6 +1793,116 @@ export type Database = {
             foreignKeyName: "sourcing_queries_product_fk"
             columns: ["owner_id", "product_id"]
             isOneToOne: true
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
+      }
+      supply_cost_snapshots: {
+        Row: {
+          computed_at: string
+          confidence: string
+          confirmed_only: Json
+          engine: Json
+          estimated: Json | null
+          fee_rate: number | null
+          fee_source: string
+          fx: Json | null
+          id: string
+          input_hash: string
+          insufficient: string[]
+          landed_max: number | null
+          landed_min: number | null
+          lines: Json
+          link_id: string
+          match_level: string
+          offer_id: string
+          order_qty: number
+          owner_id: string
+          product_id: string
+          sale_price: number | null
+          target_prices: Json
+          unit_price: Json
+          units_per_listing: number | null
+        }
+        Insert: {
+          computed_at?: string
+          confidence: string
+          confirmed_only: Json
+          engine: Json
+          estimated?: Json | null
+          fee_rate?: number | null
+          fee_source: string
+          fx?: Json | null
+          id?: string
+          input_hash: string
+          insufficient?: string[]
+          landed_max?: number | null
+          landed_min?: number | null
+          lines: Json
+          link_id: string
+          match_level: string
+          offer_id: string
+          order_qty: number
+          owner_id?: string
+          product_id: string
+          sale_price?: number | null
+          target_prices?: Json
+          unit_price: Json
+          units_per_listing?: number | null
+        }
+        Update: {
+          computed_at?: string
+          confidence?: string
+          confirmed_only?: Json
+          engine?: Json
+          estimated?: Json | null
+          fee_rate?: number | null
+          fee_source?: string
+          fx?: Json | null
+          id?: string
+          input_hash?: string
+          insufficient?: string[]
+          landed_max?: number | null
+          landed_min?: number | null
+          lines?: Json
+          link_id?: string
+          match_level?: string
+          offer_id?: string
+          order_qty?: number
+          owner_id?: string
+          product_id?: string
+          sale_price?: number | null
+          target_prices?: Json
+          unit_price?: Json
+          units_per_listing?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supply_cost_snapshots_link_fk"
+            columns: ["owner_id", "link_id"]
+            isOneToOne: false
+            referencedRelation: "product_supply_links"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "supply_cost_snapshots_offer_fk"
+            columns: ["owner_id", "offer_id"]
+            isOneToOne: false
+            referencedRelation: "supply_offers"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "supply_cost_snapshots_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "supply_cost_snapshots_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
             referencedRelation: "v_product_latest"
             referencedColumns: ["owner_id", "product_id"]
           },

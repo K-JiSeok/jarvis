@@ -164,6 +164,54 @@ test("도착 원가: 원래 통화(USD) + 환율 · 환율 없으면 계산 안 
   assert.equal(TARIFF_RANGE.max, 0.08);
 });
 
+// PHASE 19: 확인 비용만 · 산출 불가 · 계산 이력 지문 · 공급 상태 ------------------------------------
+const { costRecord, fingerprint, supplyState } = await import("../../src/lib/sourcing/cost-record.ts");
+const base19 = { unitPrice: { amount: 3271, currency: "KRW", basis: "200~1999개 구간 가격", displayConverted: true }, unitsPerListing: 1, fx: null, shipping: { perQty: 200, amountKrw: 725060, text: "해상 + 특송 200개당 ₩725,060" }, orderQty: 200, salePrice: 6710 };
+
+test("확인 비용만: 수수료율 미설정이면 산출 불가 (추정 수수료를 넣지 않음) · 설정되면 Profit Engine 으로 계산 · 제외 항목 표시", () => {
+  const none = calculateLandedCost({ ...base19, feeRate: null });
+  assert.equal(none.confirmedOnly.cost, 3271 + 3625); // 매입가 + 표시 운송비 (725,060 ÷ 200 = 3,625.3)
+  assert.equal(none.confirmedOnly.profit, null);
+  assert.ok(none.insufficient.some((x) => /수수료율 미설정/.test(x)));
+  assert.ok(none.confirmedOnly.excluded.some((x) => /관세/.test(x)) && none.confirmedOnly.excluded.some((x) => /부가세/.test(x)));
+  const set = calculateLandedCost({ ...base19, feeRate: 0.108 });
+  const direct = calculateProfit({ salePrice: 6710, unitCostAmount: 3271, exchangeRate: 1, intlShippingPerUnit: 3625, domesticShippingPerUnit: null, feeRate: 0.108, logisticsFeePerUnit: null, adCostRate: null, adCostPerUnit: null, otherCostPerUnit: 0, fixedCostTotal: null, expectedMonthlyUnits: null });
+  assert.equal(set.confirmedOnly.profit.netProfitPerUnit, direct.netProfitPerUnit);
+  // 확인 비용만 계산은 추정 포함(나쁜 경우)보다 항상 이익이 크다 = 확정 수익으로 쓰면 안 되는 이유
+  assert.ok(set.confirmedOnly.profit.netProfitPerUnit > set.profit.low.netProfitPerUnit);
+  const noPrice = calculateLandedCost({ ...base19, salePrice: null, feeRate: 0.108 });
+  assert.ok(noPrice.insufficient.some((x) => /판매가 없음/.test(x)));
+});
+test("계산 이력: 같은 입력 = 같은 지문 (다시 쌓지 않음) · 환율 · 공급가 · 판매가가 바뀌면 새 지문 · 계산 시각은 지문에 없음", () => {
+  const FX2 = { currency: "USD", krw: 1341.49, source: "ECB", rateDate: "2026-10-09" };
+  const mk = (over = {}) => {
+    const unit = { amount: 0.99, currency: "USD", basis: "x", displayConverted: false, tierMinQty: 20, ...(over.unit ?? {}) };
+    const fx = over.fx ?? FX2;
+    const landed = calculateLandedCost({ unitPrice: unit, unitsPerListing: 1, fx, shipping: null, orderQty: 20, salePrice: over.salePrice ?? 6710, feeRate: null });
+    return costRecord({ productId: "p", offerId: "o", linkId: "l", matchLevel: "UNCLEAR", salePrice: over.salePrice ?? 6710, feeRate: null, orderQty: 20, unitsPerListing: 1, unitPrice: unit, landed, profitFormulaVersion: "profit-v1" });
+  };
+  const a = mk();
+  assert.equal(a.input_hash, mk().input_hash);
+  assert.notEqual(a.input_hash, mk({ fx: { ...FX2, krw: 1333.09, rateDate: "2026-10-12" } }).input_hash);
+  assert.notEqual(a.input_hash, mk({ unit: { amount: 1.05 } }).input_hash);
+  assert.notEqual(a.input_hash, mk({ salePrice: 7900 }).input_hash);
+  assert.equal(a.fee_source, "ESTIMATED_RANGE");
+  assert.equal(a.match_level, "UNCLEAR");
+  assert.deepEqual(a.engine, { landed: "landed-cost-v1", match: "supply-match-v1", profit: "profit-v1" });
+  assert.equal(fingerprint({ x: 1 }), fingerprint({ x: 1 }));
+  assert.equal(a.input_hash.length, 16);
+});
+test("공급 상태: 제외 후보는 빼고 · 선택 전에는 원가 상태 없음 · 선택 후보만 원가 · 손실 / 불명확 표시 (이익이어도 추천 아님)", () => {
+  const loss = { landed: { min: 7586, max: 8193 }, unknownItems: ["a"], confidence: "C", profit: { low: { netProfitPerUnit: -2208 }, high: { netProfitPerUnit: -1144 } } };
+  assert.deepEqual(supplyState([]), ["NO_CANDIDATE"]);
+  assert.deepEqual(supplyState([{ userStatus: "REJECTED", matchLevel: "SIMILAR", landed: loss }]), ["NO_CANDIDATE"]);
+  assert.deepEqual(supplyState([{ userStatus: "CANDIDATE", matchLevel: "UNCLEAR", landed: loss }]), ["COLLECTED", "MATCH_UNCLEAR"]);
+  assert.deepEqual(supplyState([{ userStatus: "REJECTED", matchLevel: "UNCLEAR", landed: loss }, { userStatus: "SELECTED", matchLevel: "UNCLEAR", landed: loss }]), ["SELECTED", "MATCH_UNCLEAR", "ESTIMATE_ONLY", "UNKNOWN_COSTS", "EXPECTED_LOSS"]);
+  const gain = { ...loss, profit: { low: { netProfitPerUnit: 300 }, high: { netProfitPerUnit: 900 } } };
+  assert.ok(supplyState([{ userStatus: "SELECTED", matchLevel: "SIMILAR", landed: gain }]).includes("EXPECTED_PROFIT"));
+  assert.deepEqual(supplyState([{ userStatus: "SELECTED", matchLevel: "SIMILAR", landed: null }]), ["SELECTED", "NOT_COMPUTABLE"]);
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {

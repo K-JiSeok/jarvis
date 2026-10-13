@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { COMPLIANCE_LABELS, type ComplianceStatus } from "@/lib/automation/compliance";
+import type { FactorCoverage } from "@/lib/discover/coverage";
 import type { AutomationRunView, KeywordCandidateView } from "@/lib/repositories/automation";
 import { cn } from "@/lib/utils";
 
@@ -123,6 +124,43 @@ export function AutomationPanel({
                       </td>
                       <td className="py-1.5 pl-3">{stepCounts(st.counts)}</td>
                       <td className="text-muted-foreground py-1.5 pl-3">{st.error ?? st.note ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {Array.isArray(s.v1Coverage) && (s.v1Coverage as FactorCoverage[]).length > 0 && (
+            <div className="overflow-x-auto">
+              <h3 className="mb-1 text-sm font-semibold">Score V1 항목별 결측 (마지막 실행 · 상품 {n(s.analyzedProducts)}개)</h3>
+              <table className="w-full min-w-[760px] text-xs" data-testid="v1-coverage">
+                <thead>
+                  <tr className="text-muted-foreground border-b text-left">
+                    <th className="py-1.5 font-normal">항목 (가중치)</th>
+                    <th className="py-1.5 text-right font-normal">계산됨</th>
+                    <th className="py-1.5 text-right font-normal">NULL</th>
+                    <th className="py-1.5 text-right font-normal">추정값 사용</th>
+                    <th className="py-1.5 pl-3 font-normal">출처 · 최신일</th>
+                    <th className="py-1.5 pl-3 font-normal">채우는 경로</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(s.v1Coverage as FactorCoverage[]).map((c) => (
+                    <tr key={c.factor} className="border-b align-top last:border-0" data-coverage={c.factor}>
+                      <td className="py-1.5">
+                        {c.label} ({c.weight})
+                      </td>
+                      <td className="py-1.5 text-right tabular-nums">{c.computed}</td>
+                      <td className={cn("py-1.5 text-right tabular-nums", c.missing > 0 && "text-amber-700 dark:text-amber-300")}>{c.missing}</td>
+                      <td className="py-1.5 text-right tabular-nums">{c.estimatedUsed}</td>
+                      <td className="text-muted-foreground py-1.5 pl-3">
+                        {Object.entries(c.sources)
+                          .map(([k, v]) => `${k} ${v}`)
+                          .join(" · ") || "-"}
+                        {c.latest ? ` · ${c.latest}` : ""}
+                      </td>
+                      <td className="text-muted-foreground py-1.5 pl-3">{c.path}</td>
                     </tr>
                   ))}
                 </tbody>

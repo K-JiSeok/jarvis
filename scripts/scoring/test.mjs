@@ -469,6 +469,30 @@ test("PHASE 16 키워드 준비 상태: 네이버 값 · 10 미만 · 수집 실
   assert.match(keywordReadiness({ ...base, naverConfigured: false })[0].status, /API 키 없음/);
 });
 
+// PHASE 19: V1 항목별 결측 집계 (점수 · 판정을 바꾸지 않고 결과만 센다)
+const { v1Coverage, FILL_PATH } = await import("../../src/lib/discover/coverage.ts");
+test("PHASE 19 V1 결측 집계: 요소별 계산 · NULL · 출처 · 추정값 사용 · 최신일, 엔진 결과 그대로", () => {
+  const full = calculateOpportunityScore(best(), config);
+  const empty = calculateOpportunityScore(emptyInput(), config);
+  const est = best();
+  est.product.metrics.salesActual = null;
+  est.product.metrics.salesEstimated = period(1500, 30, { source: "ESTIMATED", confidence: "C" });
+  est.competitors = [];
+  const withEst = calculateOpportunityScore(est, config);
+  const cov = v1Coverage([full, empty, withEst]);
+  assert.equal(cov.length, 9);
+  const by = Object.fromEntries(cov.map((c) => [c.factor, c]));
+  assert.deepEqual([by.demand.computed, by.demand.missing], [2, 1]);
+  assert.equal(by.salesVolume.estimatedUsed, 1);
+  assert.ok(by.demand.sources.MANUAL >= 2);
+  assert.equal(by.conversion.missing, 1);
+  assert.match(by.conversion.topReason, /전환율/);
+  assert.match(FILL_PATH.salesVolume, /출처 없음/);
+  // 집계는 결과를 바꾸지 않는다
+  assert.equal(full.verdict, "STRONG_BUY");
+  assert.equal(empty.total, null);
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {

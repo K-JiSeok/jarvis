@@ -2,11 +2,13 @@ import "server-only";
 
 import type { CollectedSupplyOffer, PriceTier, SupplySite } from "@/lib/collectors/supplier/page";
 import { getFxRate } from "@/lib/sourcing/fx";
+import { PROFIT_FORMULA_VERSION } from "@/lib/profit/calculate";
+import { costRecord } from "@/lib/sourcing/cost-record";
 import { calculateLandedCost, pickUnitPrice, type LandedCostResult } from "@/lib/sourcing/landed-cost";
 import { matchSupply, type MatchLevel, type MatchResult } from "@/lib/sourcing/matching";
 import { toSourcingQuery, type SourcingQuery } from "@/lib/sourcing/translate";
 import { createClient } from "@/lib/supabase/server";
-import type { Json } from "@/types/database";
+import type { Json, TablesInsert } from "@/types/database";
 
 /*
  * 중국 도매 소싱 저장 · 조회 (PHASE 18). 모두 사용자 클라이언트(RLS) — service role 없음.
@@ -179,38 +181,51 @@ async function productContexts(ids?: string[]): Promise<Map<string, ProductCtx>>
   );
 }
 
-async function evaluate(product: ProductCtx, offer: OfferRow): Promise<{ match: MatchResult; landed: LandedCostResult | null }> {
+async function evaluate(product: ProductCtx, offer: OfferRow): Promise<{ match: MatchResult; landed: LandedCostResult | null; unit: ReturnType<typeof pickUnitPrice>; orderQty: number }> {
   const match = matchSupply({ product: { name: product.name, categoryPath: product.categoryPath }, offer: { title: offer.title, categoryPath: offer.categoryPath, material: offer.material, sizeText: offer.sizeText, attributes: offer.attributes, moq: offer.moq } });
   const orderQty = offer.moq ?? 1;
   const unit = pickUnitPrice(offer, orderQty);
-  if (!unit) return { match, landed: null };
+  if (!unit) return { match, landed: null, unit: null, orderQty };
   const fx = unit.currency === "KRW" ? null : await getFxRate(unit.currency);
   const s = offer.shipping;
   const shippingKrw = s && s.currency === "KRW" && s.perQty && s.amount ? { perQty: s.perQty, amountKrw: s.amount, text: s.text } : null;
   const landed = calculateLandedCost({ unitPrice: unit, unitsPerListing: match.unitsPerListing, fx, shipping: shippingKrw, orderQty, salePrice: product.salePrice, feeRate: product.feeRate });
-  return { match, landed };
+  return { match, landed, unit, orderQty };
 }
 
 /** 연결 (같은 상품 · 후보면 판정 · 원가만 갱신하고 사용자 선택 상태는 그대로) */
-export async function linkOffer(productId: string, offerId: string, origin: "TARGET" | "AUTO" | "USER"): Promise<{ level: MatchLevel; landed: LandedCostResult | null }> {
+export async function linkOffer(productId: string, offerId: string, origin: "TARGET" | "AUTO" | "USER"): Promise<{ level: MatchLevel; landed: LandedCostResult | null; snapshot: "CREATED" | "UNCHANGED" | "NOT_SELECTED" | "NOT_COMPUTABLE" }> {
   const supabase = await createClient();
   const [ctx, { data: o, error }] = await Promise.all([productContexts([productId]), supabase.from("supply_offers").select("*").eq("id", offerId).single()]);
   if (error) throw error;
   const product = ctx.get(productId);
   if (!product) throw new Error("상품을 찾을 수 없습니다.");
-  const { match, landed } = await evaluate(product, toOffer(o));
-  const { data: cur } = await supabase.from("product_supply_links").select("id, origin").eq("product_id", productId).eq("offer_id", offerId).maybeSingle();
+  const { match, landed, unit, orderQty } = await evaluate(product, toOffer(o));
+  const { data: cur } = await supabase.from("product_supply_links").select("id, origin, user_status").eq("product_id", productId).eq("offer_id", offerId).maybeSingle();
   const patch = { match_level: match.level, match: match as unknown as Json, landed: landed as unknown as Json, landed_at: new Date().toISOString() };
+  let linkId: string;
   if (cur) {
-    // 경로는 더 확실한 쪽을 남긴다 (TARGET · USER 가 AUTO 보다 우선)
+    // 경로는 더 확실한 쪽을 남긴다 (TARGET · USER 가 AUTO 보다 우선). 사용자 선택 상태(user_status)는 건드리지 않는다
     const keepOrigin = cur.origin === "AUTO" ? origin : cur.origin;
     const { error: e } = await supabase.from("product_supply_links").update({ ...patch, origin: keepOrigin }).eq("id", cur.id);
     if (e) throw e;
+    linkId = cur.id;
   } else {
-    const { error: e } = await supabase.from("product_supply_links").insert({ product_id: productId, offer_id: offerId, origin, ...patch });
+    const { data: ins, error: e } = await supabase.from("product_supply_links").insert({ product_id: productId, offer_id: offerId, origin, ...patch }).select("id").single();
     if (e) throw e;
+    linkId = ins.id;
   }
-  return { level: match.level, landed };
+
+  // 사용자가 [선택]한 후보만 계산 이력을 쌓는다 (같은 입력이면 그대로 — 과거 이력은 수정 금지 트리거로 보호)
+  if (cur?.user_status !== "SELECTED") return { level: match.level, landed, snapshot: "NOT_SELECTED" };
+  if (!landed || !unit) return { level: match.level, landed, snapshot: "NOT_COMPUTABLE" };
+  const rec = costRecord({ productId, offerId, linkId, matchLevel: match.level, salePrice: product.salePrice, feeRate: product.feeRate, orderQty, unitsPerListing: match.unitsPerListing, unitPrice: unit, landed, profitFormulaVersion: PROFIT_FORMULA_VERSION });
+  const { data: inserted, error: se } = await supabase
+    .from("supply_cost_snapshots")
+    .upsert(rec as unknown as TablesInsert<"supply_cost_snapshots">, { onConflict: "owner_id,link_id,input_hash", ignoreDuplicates: true })
+    .select("id");
+  if (se) throw se;
+  return { level: match.level, landed, snapshot: inserted && inserted.length > 0 ? "CREATED" : "UNCHANGED" };
 }
 
 /** 대상 상품 없이 저장된 후보 → 등록 상품 전체와 비교해 유사 이상만 자동 연결 제안 (최대 5개) */
@@ -227,21 +242,25 @@ export async function autoLinkOffer(offerId: string): Promise<{ linked: number; 
   return { linked: hits.length, checked: ctx.size };
 }
 
-export async function refreshLinks(): Promise<{ refreshed: number; failed: number }> {
+export async function refreshLinks(): Promise<{ refreshed: number; failed: number; snapshotsCreated: number; snapshotsUnchanged: number }> {
   const supabase = await createClient();
   const { data: links, error } = await supabase.from("product_supply_links").select("product_id, offer_id, origin");
   if (error) throw error;
   let refreshed = 0;
   let failed = 0;
+  let snapshotsCreated = 0;
+  let snapshotsUnchanged = 0;
   for (const l of links) {
     try {
-      await linkOffer(l.product_id, l.offer_id, l.origin as "TARGET" | "AUTO" | "USER");
+      const r = await linkOffer(l.product_id, l.offer_id, l.origin as "TARGET" | "AUTO" | "USER");
       refreshed += 1;
+      if (r.snapshot === "CREATED") snapshotsCreated += 1;
+      if (r.snapshot === "UNCHANGED") snapshotsUnchanged += 1;
     } catch {
       failed += 1;
     }
   }
-  return { refreshed, failed };
+  return { refreshed, failed, snapshotsCreated, snapshotsUnchanged };
 }
 
 export async function ensureQueries(): Promise<{ created: number; updated: number; kept: number }> {
@@ -281,6 +300,25 @@ export interface SupplyLinkView {
   landedAt: string | null;
   offer: OfferRow;
   history: { capturedOn: string; basePrice: number | null; baseCurrency: string | null; firstTier: PriceTier | null }[];
+  /** 선택한 후보의 원가 계산 이력 (최신 순, 수정되지 않음) */
+  costHistory: CostSnapshotView[];
+}
+
+export interface CostSnapshotView {
+  id: string;
+  computedAt: string;
+  landedMin: number | null;
+  landedMax: number | null;
+  salePrice: number | null;
+  feeSource: string;
+  fx: { currency: string; krw: number; rateDate: string } | null;
+  unitPrice: { amount: number; currency: string; basis: string } | null;
+  confirmedOnly: { cost: number | null; profit: { complete: boolean; netProfitPerUnit: number | null; netMarginRate: number | null } | null };
+  estimated: { low: { netProfitPerUnit: number | null; netMarginRate: number | null } | null; high: { netProfitPerUnit: number | null; netMarginRate: number | null } | null } | null;
+  insufficient: string[];
+  confidence: string;
+  matchLevel: string;
+  engine: Record<string, string>;
 }
 
 export interface QueryView {
@@ -302,6 +340,12 @@ export async function listSourcing(productIds: string[]): Promise<{ queries: Map
     supabase.from("product_supply_links").select("*, supply_offers!product_supply_links_offer_fk(*)").in("product_id", productIds).order("created_at"),
   ]);
   const offerIds = [...new Set((ls ?? []).map((l) => l.offer_id))];
+  const { data: costs } = await supabase
+    .from("supply_cost_snapshots")
+    .select("id, link_id, computed_at, landed_min, landed_max, sale_price, fee_source, fx, unit_price, confirmed_only, estimated, insufficient, confidence, match_level, engine")
+    .in("product_id", productIds)
+    .order("computed_at", { ascending: false })
+    .limit(500);
   const { data: snaps } = offerIds.length
     ? await supabase.from("supply_offer_snapshots").select("offer_id, captured_on, base_price, base_currency, tiers").in("offer_id", offerIds).order("captured_on", { ascending: false }).limit(1000)
     : { data: [] };
@@ -324,6 +368,24 @@ export async function listSourcing(productIds: string[]): Promise<{ queries: Map
       history: (snaps ?? [])
         .filter((s) => s.offer_id === l.offer_id)
         .map((s) => ({ capturedOn: s.captured_on, basePrice: s.base_price != null ? Number(s.base_price) : null, baseCurrency: s.base_currency, firstTier: ((s.tiers as unknown as PriceTier[]) ?? [])[0] ?? null })),
+      costHistory: (costs ?? [])
+        .filter((c) => c.link_id === l.id)
+        .map((c) => ({
+          id: c.id,
+          computedAt: c.computed_at,
+          landedMin: c.landed_min,
+          landedMax: c.landed_max,
+          salePrice: c.sale_price,
+          feeSource: c.fee_source,
+          fx: c.fx as unknown as CostSnapshotView["fx"],
+          unitPrice: c.unit_price as unknown as CostSnapshotView["unitPrice"],
+          confirmedOnly: c.confirmed_only as unknown as CostSnapshotView["confirmedOnly"],
+          estimated: c.estimated as unknown as CostSnapshotView["estimated"],
+          insufficient: c.insufficient,
+          confidence: c.confidence,
+          matchLevel: c.match_level,
+          engine: c.engine as unknown as Record<string, string>,
+        })),
     };
     links.set(l.product_id, [...(links.get(l.product_id) ?? []), view]);
   }

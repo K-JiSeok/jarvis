@@ -1,5 +1,6 @@
 import { SUPPLY_SITE_LABELS } from "@/lib/collectors/supplier/page";
 import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
+import { SUPPLY_STATE_LABELS, supplyState, type SupplyStateKey } from "@/lib/sourcing/cost-record";
 import { searchLinks } from "@/lib/sourcing/links";
 import { MATCH_LABELS } from "@/lib/sourcing/matching";
 import { cn } from "@/lib/utils";
@@ -9,6 +10,68 @@ import { SupplyStatusForm } from "./sourcing-forms";
 const won = (n: number | null | undefined) => (n == null ? "-" : `${Math.round(n).toLocaleString("ko-KR")}원`);
 const range = (r: { min: number | null; max: number | null }) => (r.min == null ? "-" : r.min === r.max ? won(r.min) : `${won(r.min)} ~ ${won(r.max)}`);
 const pct = (v: number | null | undefined) => (v == null ? "-" : `${(v * 100).toFixed(1)}%`);
+const STATE_TONE: Partial<Record<SupplyStateKey, string>> = {
+  EXPECTED_LOSS: "border-red-300 text-red-700 dark:text-red-300",
+  EXPECTED_PROFIT: "border-emerald-300 text-emerald-700 dark:text-emerald-300",
+  MATCH_UNCLEAR: "border-amber-300 text-amber-700 dark:text-amber-300",
+  UNKNOWN_COSTS: "border-amber-300 text-amber-700 dark:text-amber-300",
+  ESTIMATE_ONLY: "border-amber-300 text-amber-700 dark:text-amber-300",
+  NOT_COMPUTABLE: "border-red-300 text-red-700 dark:text-red-300",
+};
+
+/** 사용자가 선택한 후보: 1) 확인 비용만 2) 추정 포함 3) 산출 불가 + 계산 이력 */
+function SelectedCost({ l }: { l: SupplyLinkView }) {
+  const lc = l.landed;
+  const co = lc?.confirmedOnly;
+  return (
+    <div className="space-y-1 rounded-md border border-blue-200 p-2" data-testid="selected-cost" data-link={l.linkId}>
+      <p className="font-semibold">
+        선택한 공급 후보: {l.offer.title.slice(0, 40)} · {MATCH_LABELS[l.matchLevel]}
+        {l.matchLevel !== "HIGH" && <span className="text-amber-700 dark:text-amber-300"> — 확정 매칭 아님</span>}
+      </p>
+      {lc ? (
+        <ol className="list-decimal space-y-0.5 pl-5">
+          <li data-result="confirmed">
+            확인된 비용만: 원가 {won(co?.cost)} (제외: {co?.excluded.slice(0, 3).join(" · ")} 외) →{" "}
+            {co?.profit?.complete ? (
+              <>
+                이익 {won(co.profit.netProfitPerUnit)} · 마진 {pct(co.profit.netMarginRate)} <span className="text-muted-foreground">(실제보다 좋게 나오는 하한 원가 — 확정 수익 아님)</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">산출 불가 — 쿠팡 수수료율 미설정 (추정 수수료를 넣지 않음)</span>
+            )}
+          </li>
+          <li data-result="estimated">
+            추정 포함 시나리오: 도착 원가 {lc.landed ? range(lc.landed) : "-"} · 이익 {lc.profit ? `${won(lc.profit.low.netProfitPerUnit)} ~ ${won(lc.profit.high.netProfitPerUnit)}` : "-"} · 신뢰도 {lc.confidence}
+          </li>
+          <li data-result="insufficient">
+            산출 불가 · 부족: {(lc.insufficient ?? []).join(" / ") || "없음"} · 미확인 비용 {lc.unknownItems.length}개
+          </li>
+        </ol>
+      ) : (
+        <p className="text-muted-foreground">원가 계산 불가 (가격 또는 환율 없음)</p>
+      )}
+      <details>
+        <summary className="cursor-pointer">계산 이력 {l.costHistory.length}건 (수정되지 않음 · 입력이 바뀔 때만 새로 쌓임)</summary>
+        <table className="mt-1 w-full" data-testid="cost-history">
+          <tbody>
+            {l.costHistory.map((h) => (
+              <tr key={h.id} className="border-b last:border-0">
+                <td className="py-0.5 pr-2 whitespace-nowrap">{h.computedAt.slice(0, 16).replace("T", " ")}</td>
+                <td className="py-0.5 pr-2">원가 {range({ min: h.landedMin, max: h.landedMax })}</td>
+                <td className="py-0.5 pr-2">이익 {h.estimated ? `${won(h.estimated.low?.netProfitPerUnit)} ~ ${won(h.estimated.high?.netProfitPerUnit)}` : "-"}</td>
+                <td className="text-muted-foreground py-0.5">
+                  판매가 {won(h.salePrice)} · {h.unitPrice ? `${h.unitPrice.amount} ${h.unitPrice.currency}` : "-"} · 환율 {h.fx ? `${h.fx.krw} (${h.fx.rateDate})` : "원화"} · {h.engine?.landed} · {h.engine?.profit}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </div>
+  );
+}
+
 const STATUS: Record<SupplyLinkView["userStatus"], string> = { CANDIDATE: "후보", SELECTED: "선택", REJECTED: "제외" };
 const ORIGIN: Record<SupplyLinkView["origin"], string> = { TARGET: "이 상품을 찾다 저장", AUTO: "자동 매칭 제안", USER: "직접 연결" };
 
@@ -16,12 +79,24 @@ const ORIGIN: Record<SupplyLinkView["origin"], string> = { TARGET: "이 상품�
 export function SourcingSection({ productId, query, links }: { productId: string; query: QueryView | null; links: SupplyLinkView[] }) {
   const searches = query ? searchLinks({ zh: query.zh ?? "", en: query.en ?? "", koCore: query.ko ?? "" }, productId) : [];
   const active = links.filter((l) => l.userStatus !== "REJECTED");
+  const states = supplyState(links);
+  const selected = links.filter((l) => l.userStatus === "SELECTED");
   return (
     <details className="rounded-md border px-3 py-2" data-testid="discover-sourcing" open={links.length > 0}>
       <summary className="cursor-pointer text-xs font-semibold">
         중국 도매 소싱 — 공급 후보 {active.length}개{links.length > active.length ? ` (제외 ${links.length - active.length})` : ""}
       </summary>
       <div className="mt-2 space-y-3 text-xs">
+        <div className="flex flex-wrap gap-1" data-testid="supply-state">
+          {states.map((k) => (
+            <span key={k} data-supply-state={k} className={cn("rounded border px-1.5 py-0.5", STATE_TONE[k])}>
+              {SUPPLY_STATE_LABELS[k]}
+            </span>
+          ))}
+        </div>
+        {selected.map((l) => (
+          <SelectedCost key={l.linkId} l={l} />
+        ))}
         {query ? (
           <div className="space-y-1" data-testid="sourcing-query">
             <p>

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { normalizeKeyword } from "@/lib/keywords";
+import { v1Coverage } from "@/lib/discover/coverage";
 import { discoverStatus } from "@/lib/discover/summary";
 import { registerSelected } from "@/lib/ingest/service";
 import { collectNaverSearchVolumes, fetchRelatedKeywords } from "@/lib/ingest/naver-searchad";
@@ -333,11 +334,26 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       const q = await ensureQueries();
       const fx = await Promise.all(["USD", "CNY"].map(async (c) => [c, await getFxRate(c)] as const));
       const l = await refreshLinks();
+      const { count: selected } = await supabase.from("product_supply_links").select("id", { count: "exact", head: true }).eq("user_status", "SELECTED");
+      const { count: costSnapshots } = await supabase.from("supply_cost_snapshots").select("id", { count: "exact", head: true });
       const { count: offers } = await supabase.from("supply_offers").select("id", { count: "exact", head: true });
       summary.supplyOffers = offers ?? 0;
       summary.supplyLinks = l.refreshed;
       return {
-        counts: { queriesCreated: q.created, queriesUpdated: q.updated, queriesKept: q.kept, offers: offers ?? 0, linksRecalculated: l.refreshed, linksFailed: l.failed, fxUSD: fx[0][1]?.krw ?? null, fxCNY: fx[1][1]?.krw ?? null },
+        counts: {
+          queriesCreated: q.created,
+          queriesUpdated: q.updated,
+          queriesKept: q.kept,
+          offers: offers ?? 0,
+          linksRecalculated: l.refreshed,
+          linksFailed: l.failed,
+          selected: selected ?? 0,
+          costSnapshotsCreated: l.snapshotsCreated,
+          costSnapshotsUnchanged: l.snapshotsUnchanged,
+          costSnapshotsTotal: costSnapshots ?? 0,
+          fxUSD: fx[0][1]?.krw ?? null,
+          fxCNY: fx[1][1]?.krw ?? null,
+        },
         note: fx.some(([, r]) => !r) ? "환율을 받지 못한 통화가 있습니다 (원가 계산 멈춤)" : undefined,
       };
     });
@@ -345,6 +361,8 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
     // 6. 분석 (Score V1 미리 보기 · 수익성 · 준비 상태) ----------------------------------
     await step("analysis", async (): Promise<StepOut> => {
       const best = new Map<string, "FINAL" | "PROVISIONAL" | "INSUFFICIENT">();
+      // 항목별 결측 현황은 상품당 1번 (여러 키워드에 연결돼도 처음 본 키워드 맥락 결과 1개)
+      const perProduct = new Map<string, import("@/lib/scoring/engine").ScoreResult>();
       const profit = new Set<string>();
       const rank = { FINAL: 0, PROVISIONAL: 1, INSUFFICIENT: 2 } as const;
       const missing: Record<string, number> = {};
@@ -356,6 +374,7 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
           const prev = best.get(p.id);
           if (!prev || rank[s] < rank[prev]) best.set(p.id, s);
           if (p.primaryScenario?.current) profit.add(p.id);
+          if (!perProduct.has(p.id)) perProduct.set(p.id, p.preview);
           for (const f of p.preview.factors) if (f.score == null) missing[f.factor] = (missing[f.factor] ?? 0) + 1;
         }
       }
@@ -366,6 +385,7 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       summary.v1Insufficient = count("INSUFFICIENT");
       summary.profitDone = profit.size;
       summary.missingFactors = missing;
+      summary.v1Coverage = v1Coverage([...perProduct.values()]) as unknown as Json;
       return { counts: { analyzed: best.size, final: count("FINAL"), provisional: count("PROVISIONAL"), insufficient: count("INSUFFICIENT"), profitDone: profit.size, missingFactors: missing } };
     });
   } catch (e) {

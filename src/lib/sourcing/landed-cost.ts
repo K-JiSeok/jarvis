@@ -71,6 +71,13 @@ export interface LandedCostResult {
   warnings: string[];
   fx: FxRate | null;
   profit: { low: ProfitResult; high: ProfitResult } | null;
+  /**
+   * 확인된 비용만 (상품 매입가 + 사이트 표시 운송비). 관세 · 수입 부가세(관세 범위에 따라 달라짐) · 미확인 비용 제외 → 실제보다 이익이 크게 나온다.
+   * 수수료율이 설정돼 있지 않으면 Profit Engine 이 계산하지 않는다 (incomplete) — 추정 수수료를 넣지 않는다
+   */
+  confirmedOnly: { cost: number; excluded: string[]; profit: ProfitResult | null } | null;
+  /** 산출할 수 없는 결과와 그 이유 */
+  insufficient: string[];
   targetPrices: { margin: number; min: number | null; max: number | null }[];
   /** C = 참고용 추정 · B = 신뢰도 높은 추정. A(확정)는 미확인 비용이 없고 추정 범위도 없을 때만 */
   confidence: "A" | "B" | "C";
@@ -87,7 +94,20 @@ export function calculateLandedCost(i: LandedCostInput): LandedCostResult {
 
   const rate = i.unitPrice.currency === "KRW" ? 1 : i.fx && i.fx.currency === i.unitPrice.currency ? i.fx.krw : null;
   if (rate == null) {
-    return { version: LANDED_COST_VERSION, lines, landed: null, unknownItems: ["환율"], warnings: [`${i.unitPrice.currency} 환율이 없어 원가를 계산할 수 없습니다`], fx: i.fx, profit: null, targetPrices: [], confidence: "C", confirmedProfitability: false };
+    return {
+      version: LANDED_COST_VERSION,
+      lines,
+      landed: null,
+      unknownItems: ["환율"],
+      warnings: [`${i.unitPrice.currency} 환율이 없어 원가를 계산할 수 없습니다`],
+      fx: i.fx,
+      profit: null,
+      confirmedOnly: null,
+      insufficient: [`${i.unitPrice.currency} 환율 없음 → 원가 · 이익 산출 불가`],
+      targetPrices: [],
+      confidence: "C",
+      confirmedProfitability: false,
+    };
   }
   const goods = i.unitPrice.amount * rate * units;
   lines.push({
@@ -154,9 +174,21 @@ export function calculateLandedCost(i: LandedCostInput): LandedCostResult {
   }));
 
   const unknownItems = lines.filter((l) => l.status === "UNKNOWN").map((l) => l.label);
+
+  // 1) 확인된 비용만 — 수수료는 설정값이 있을 때만 (추정 범위를 쓰지 않는다)
+  const confirmedCost = r(goods + (shipping ?? 0));
+  const confirmedOnly = {
+    cost: confirmedCost,
+    excluded: ["관세 (품목분류 미확정)", "수입 부가세 (관세에 따라 달라짐)", ...unknownItems],
+    profit: i.salePrice != null && i.feeRate != null ? profitOf({ goods, duties: 0 }, i.feeRate) : null,
+  };
+  const insufficient: string[] = [];
+  if (i.salePrice == null) insufficient.push("판매가 없음 → 이익 · 마진 산출 불가");
+  if (i.feeRate == null) insufficient.push("쿠팡 수수료율 미설정 → '확인 비용만' 이익 산출 불가 (추정 범위 4~10.8% 로만 계산)");
+  if (shipping == null) insufficient.push("해외 운송비 없음 → 도착 원가가 실제보다 낮게 나옴");
   const hasEstimate = lines.some((l) => l.status === "ESTIMATED") || i.unitPrice.displayConverted || i.unitsPerListing == null;
   const confidence = unknownItems.length === 0 && !hasEstimate ? "A" : unknownItems.length <= 1 && !i.unitPrice.displayConverted ? "B" : "C";
-  return { version: LANDED_COST_VERSION, lines, landed, unknownItems, warnings, fx: i.fx, profit, targetPrices, confidence, confirmedProfitability: confidence === "A" };
+  return { version: LANDED_COST_VERSION, lines, landed, unknownItems, warnings, fx: i.fx, profit, confirmedOnly, insufficient, targetPrices, confidence, confirmedProfitability: confidence === "A" };
 }
 
 /** 공급 후보 → 원가 계산에 쓸 단가 (원래 통화 우선 · MOQ 구간) */

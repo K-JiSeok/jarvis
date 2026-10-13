@@ -7,6 +7,7 @@ import { COMPLIANCE_STATUSES, type ComplianceFinding, type ComplianceStatus } fr
 import { runDiscoveryPipeline } from "@/lib/automation/pipeline";
 import { dbErrorMessage, fail, isPgError, type FormState } from "@/lib/forms";
 import { createKeyword, findKeywordIdByText } from "@/lib/repositories/keywords";
+import { linkOffer } from "@/lib/repositories/sourcing";
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/types/database";
 
@@ -37,10 +38,20 @@ export async function setSupplyStatusAction(linkId: string, _prev: FormState, fo
   const status = String(formData.get("status") ?? "");
   if (!["CANDIDATE", "SELECTED", "REJECTED"].includes(status)) return fail("상태를 고르세요.");
   const supabase = await createClient();
-  const { error } = await supabase.from("product_supply_links").update({ user_status: status }).eq("id", linkId);
+  const { data: link, error } = await supabase.from("product_supply_links").update({ user_status: status }).eq("id", linkId).select("product_id, offer_id, origin").single();
   if (error) return fail(dbErrorMessage(error));
+  let note = "";
+  if (status === "SELECTED") {
+    // 선택한 후보만 원가 · 수익성 계산 이력을 남긴다 (같은 입력이면 다시 쌓지 않음)
+    try {
+      const r = await linkOffer(link.product_id, link.offer_id, link.origin as "TARGET" | "AUTO" | "USER");
+      note = r.snapshot === "CREATED" ? " 원가 계산 이력을 저장했습니다." : r.snapshot === "UNCHANGED" ? " 원가 입력이 같아 이력은 그대로입니다." : " 원가를 계산할 수 없어 이력을 남기지 않았습니다.";
+    } catch (e) {
+      note = ` 원가 이력 저장 실패: ${dbErrorMessage(e)}`;
+    }
+  }
   revalidatePath("/discover");
-  return { ok: true, message: status === "SELECTED" ? "공급 후보로 선택했습니다." : status === "REJECTED" ? "제외했습니다 (기록은 남습니다)." : "후보로 되돌렸습니다." };
+  return { ok: true, message: (status === "SELECTED" ? "공급 후보로 선택했습니다." : status === "REJECTED" ? "제외했습니다 (기록은 남습니다)." : "후보로 되돌렸습니다.") + note };
 }
 
 /** 키워드 후보 → 등록 키워드 (추적 중). 후보에는 등록한 키워드를 연결해 둔다 */
