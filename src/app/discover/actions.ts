@@ -196,3 +196,33 @@ export async function bulkStartSourcingAction(_prev: FormState, formData: FormDa
   revalidatePath("/watchlist");
   return { ok: started > 0, message: `선택 ${ids.length}개 중 ${started}개 소싱 시작${skipped.length ? ` · 건너뜀 ${skipped.length}개: ${skipped.join(", ")}` : ""}` };
 }
+
+/** 발굴 범위 넓히기 (PHASE 22): 대기 후보 중 네이버 검색량 상위 n개를 추적 키워드로 (10 미만 · 이미 등록된 키워드는 건너뜀) */
+export async function promoteTopCandidatesAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
+  const n = Math.min(20, Math.max(1, Number(formData.get("n") ?? 10) || 10));
+  const supabase = await createClient();
+  const { data: cands, error } = await supabase
+    .from("keyword_candidates")
+    .select("id, keyword")
+    .eq("status", "NEW")
+    .eq("below_10", false)
+    .not("search_volume", "is", null)
+    .order("search_volume", { ascending: false })
+    .limit(n);
+  if (error) return fail(dbErrorMessage(error));
+  const done: string[] = [];
+  for (const c of cands ?? []) {
+    try {
+      let keywordId = await findKeywordIdByText(c.keyword);
+      if (!keywordId) keywordId = await createKeyword({ keyword: c.keyword, categoryId: null, isTracking: true });
+      const { error: e } = await supabase.from("keyword_candidates").update({ status: "PROMOTED", promoted_keyword_id: keywordId }).eq("id", c.id);
+      if (e) throw e;
+      done.push(c.keyword);
+    } catch (e) {
+      if (!isPgError(e, "23505")) return fail(`${done.length}개 등록 후 오류: ${dbErrorMessage(e)}`);
+    }
+  }
+  revalidatePath("/discover");
+  return { ok: done.length > 0, message: done.length ? `${done.length}개를 추적 키워드로 등록했습니다: ${done.join(", ")}. 다음 자동 실행부터 검색량 · 연관 키워드를 모읍니다.` : "등록할 후보가 없습니다." };
+}

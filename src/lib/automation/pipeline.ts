@@ -194,8 +194,9 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
           const e = byKey.get(c.normalized);
           if (e) updated += 1;
           else inserted += 1;
+          // id 는 보내지 않는다: 새 후보 · 기존 후보가 한 요청에 섞이면 새 행에 id NULL 이 들어가 실패한다 (PHASE 22 수정)
+          // 기존 행은 onConflict(owner_id, normalized_keyword) 로 찾아 갱신된다
           return {
-            ...(e ? { id: e.id } : {}),
             owner_id: userId,
             keyword: c.keyword,
             normalized_keyword: c.normalized,

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { CostStateChips } from "@/components/costs/cost-result";
 import { SUPPLY_SITE_LABELS } from "@/lib/collectors/supplier/page";
 import type { DetailResult } from "@/lib/costs/detail";
+import { rankSuppliers } from "@/lib/sourcing/recommend";
 import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
 import { SUPPLY_STATE_LABELS, supplyState, type SupplyStateKey } from "@/lib/sourcing/cost-record";
 import { searchLinks } from "@/lib/sourcing/links";
@@ -109,14 +110,24 @@ const STATUS: Record<SupplyLinkView["userStatus"], string> = { CANDIDATE: "후�
 const ORIGIN: Record<SupplyLinkView["origin"], string> = { TARGET: "이 상품을 찾다 저장", AUTO: "자동 매칭 제안", USER: "직접 연결" };
 
 /** 상품 카드 안의 중국 도매 소싱 (PHASE 18) — 검색어 · 검색 링크 · 공급 후보 비교 · 도착 원가 · 예상 수익성 */
-export function SourcingSection({ productId, query, links: rawLinks, detail = null, inScope = true, blocker = null }: { productId: string; query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; inScope?: boolean; blocker?: string | null }) {
+export function SourcingSection({ productId, query, links: rawLinks, detail = null, inScope = true, blocker = null, allowedCost30 = null }: { productId: string; query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; inScope?: boolean; blocker?: string | null; allowedCost30?: number | null }) {
   // 소싱 대상(사용자가 [소싱 시작]한 상품)만 검색 링크 · 상세 원가. 대상이 아니어도 기존 공급 후보 · 원가 기록은 보여 준다 (지우지 않음)
   const searches = inScope && query ? searchLinks({ zh: query.zh ?? "", en: query.en ?? "", koCore: query.ko ?? "" }, productId) : [];
-  // 비교 순서: 사용자 선택 → 일치도(확정 > 유사 > 불명확) → 제외는 맨 뒤. 가격순이 아니며 최종 선정은 사용자가 한다
+  // 표 순서: 사용자 선택 → 추천 순서(일치도 → 도착 원가 → MOQ → 연차) → 제외는 맨 뒤. 최종 선정은 사용자가 한다
   const ORDER = { SELECTED: 0, CANDIDATE: 1, REJECTED: 3 } as const;
-  const LV = { HIGH: 0, SIMILAR: 1, UNCLEAR: 2 } as const;
-  const links = [...rawLinks].sort((a, b) => ORDER[a.userStatus] - ORDER[b.userStatus] || LV[a.matchLevel] - LV[b.matchLevel]);
+  const pre = rankSuppliers(
+    rawLinks.map((l) => ({ linkId: l.linkId, title: l.offer.title, matchLevel: l.matchLevel, userStatus: l.userStatus, landed: l.landed?.landed ?? null, moq: l.offer.moq, supplierYears: l.offer.supplierMeta?.years ?? null })),
+    null,
+  );
+  const preRank = new Map(pre.ranked.map((x) => [x.linkId, x.rank]));
+  const links = [...rawLinks].sort((a, b) => ORDER[a.userStatus] - ORDER[b.userStatus] || (preRank.get(a.linkId) ?? 99) - (preRank.get(b.linkId) ?? 99));
   const active = links.filter((l) => l.userStatus !== "REJECTED");
+  // 추천 순서 (PHASE 22 · supply-rank-v1): 일치도 → 도착 원가 → MOQ → 업체 연차. 자동 [선택] 없음
+  const rec = rankSuppliers(
+    links.map((l) => ({ linkId: l.linkId, title: l.offer.title, matchLevel: l.matchLevel, userStatus: l.userStatus, landed: l.landed?.landed ?? null, moq: l.offer.moq, supplierYears: l.offer.supplierMeta?.years ?? null })),
+    allowedCost30,
+  );
+  const rankOf = new Map(rec.ranked.map((x) => [x.linkId, x.rank]));
   const states = supplyState(links);
   const selected = links.filter((l) => l.userStatus === "SELECTED");
   return (
@@ -138,6 +149,17 @@ export function SourcingSection({ productId, query, links: rawLinks, detail = nu
           </p>
         )}
         {inScope && detail && <DetailSummary productId={productId} d={detail} />}
+        {links.length > 0 && (
+          <p className={cn("rounded border px-2 py-1", rec.recommended ? "border-emerald-200" : "border-amber-200")} data-testid="supply-recommend">
+            {rec.note}
+            {allowedCost30 != null && <span className="text-muted-foreground"> · 이 상품 원가 상한(마진 30%, 추정) {allowedCost30.toLocaleString("ko-KR")}원</span>}
+          </p>
+        )}
+        {inScope && (
+          <p className="text-muted-foreground">
+            이미지로 같은 상품 찾기: 1688 공식 확장 프로그램(1688采购助手 · 1688 AlphaShop)으로 쿠팡 상품 이미지를 검색 → 1688 상품 페이지를 열고 JARVIS [공급 후보 저장]. JARVIS 는 다른 확장 프로그램을 조작하지 않습니다.
+          </p>
+        )}
         {selected.map((l) => (
           <SelectedCost key={l.linkId} l={l} />
         ))}
@@ -188,6 +210,7 @@ export function SourcingSection({ productId, query, links: rawLinks, detail = nu
                   return (
                     <tr key={l.linkId} className={cn("border-b align-top last:border-0", l.userStatus === "REJECTED" && "opacity-50")} data-supply={l.offer.id} data-match={l.matchLevel}>
                       <td className="py-1.5 pr-2">
+                        {l.userStatus !== "REJECTED" && <span className="text-muted-foreground mr-1 tabular-nums">#{rankOf.get(l.linkId)}</span>}
                         <a href={l.offer.url} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
                           {l.offer.title.slice(0, 50)}
                         </a>
@@ -273,7 +296,7 @@ export function SourcingSection({ productId, query, links: rawLinks, detail = nu
               </tbody>
             </table>
             <p className="text-muted-foreground mt-1">
-              정렬: 내가 선택한 후보 → 일치도(확정 · 유사 · 불명확) → 제외 순 (가격순 아님 · 점수 · 등급을 매기지 않음). 가장 싼 후보를 자동으로 고르지 않습니다 — 일치도 · 사양 · 구성 수량 · MOQ · 가격 구간 · 배송비 · 판매자 정보를 함께 보고 [선택]하세요. 도착 원가는 미확인 비용(중국 내 배송 · 구매대행 · 통관 수수료 ·
+              정렬: 내가 선택한 후보 → 추천 순서(일치도 → 도착 원가 → MOQ → 업체 연차, 점수 합산 없음) → 제외 순. 가장 싼 후보를 자동으로 고르지 않습니다 — 일치도 · 사양 · 구성 수량 · MOQ · 가격 구간 · 배송비 · 판매자 정보를 함께 보고 [선택]하세요. 도착 원가는 미확인 비용(중국 내 배송 · 구매대행 · 통관 수수료 ·
               국내 배송 · 광고비)을 넣지 않은 하한이며, 이 값은 수익성 시나리오로 저장하지 않습니다.
             </p>
           </div>

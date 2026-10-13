@@ -51,6 +51,23 @@ function reviewCountText(ld: LdNode | null): string | null {
   return [...document.querySelectorAll("#navigation-tabs a, #navigation-tabs button")].map(text).find((t) => /^상품평\s*\([\d,]+\)$/.test(t)) ?? null;
 }
 
+/**
+ * 리뷰 목록에 지금 보이는 리뷰의 작성일 (화면 순서 그대로, 최대 20개). 정렬 버튼을 누르지 않는다 — 사용자가 [최신순]을 고른 화면이면
+ * 날짜가 최신부터 이어져 판매량 추정(est-sales-v1)에 쓰고, [베스트순]이면 순서가 섞여 서버가 쓰지 않는다.
+ * 2026-10-13 실제 페이지: 리뷰 1개 = <article>, 작성일 "2026.10.08" 글자만 있는 요소.
+ */
+export function reviewDates(): string[] {
+  const out: string[] = [];
+  for (const a of document.querySelectorAll("article")) {
+    const el = [...a.querySelectorAll("div, span")].find((e) => e.children.length === 0 && /^20\d\d\.\d\d?\.\d\d?$/.test((e.textContent ?? "").trim()));
+    if (!el) continue;
+    const [y, m, d] = el.textContent!.trim().split(".");
+    out.push(`${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 export function readProductPage(): RawCoupangProductPage {
   const ld = jsonLd("Product");
   const crumbs = jsonLd("BreadcrumbList");
@@ -72,6 +89,8 @@ export function readProductPage(): RawCoupangProductPage {
     sellerInfoText: (document.querySelector(".seller-info") as HTMLElement | null)?.innerText?.replace(/\s+/g, " ").trim() || null,
     observedOnly: {
       monthlyBuyers: atfText.match(/한 달간\s*([\d,]+\s*명 이상)\s*구매했어요/)?.[1] ?? null,
+      // 판매량 추정용 (PHASE 22): 지금 보이는 리뷰 작성일 "YYYY-MM-DD,…" — 최신순 화면일 때만 서버가 사용
+      reviewDates: reviewDates().join(",") || null,
       wowPrice: price.wowPriceText,
       jsonLdPrice: ld?.offers?.price != null ? String(ld.offers.price) : null,
       category:

@@ -6,6 +6,9 @@ import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { AutomationPanel } from "@/components/discover/automation-panel";
 import { StagePanel, type ScopeItem } from "@/components/discover/stage-panel";
+import { BroadenPanel, EstimatePanel } from "@/components/discover/estimate-panel";
+import { loadEstimates } from "@/lib/repositories/estimates";
+import { createClient } from "@/lib/supabase/server";
 import { productStage, stageCounts } from "@/lib/discover/stage";
 import { loadStageRows } from "@/lib/repositories/stage";
 import { DiscoverProductCard } from "@/components/discover/discover-product-card";
@@ -68,7 +71,16 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   const stageOf = new Map(stageRows.map((r) => [r.productId, { ...productStage(r), watchStatus: r.watchStatus }]));
   const scopeIds = stageRows.filter((r) => stageOf.get(r.productId)!.inScope).map((r) => r.productId);
   const [sourcing, details] = await Promise.all([listSourcing(sorted.map((p) => p.id)), loadDetails(scopeIds)]);
-  const sourcingOf = (id: string) => ({ query: sourcing.queries.get(id) ?? null, links: sourcing.links.get(id) ?? [], detail: details.get(id)?.result ?? null, stage: stageOf.get(id) ?? null, keywordId: analysis?.keyword.id ?? null });
+  // 추정 판매 (PHASE 22): 전체 상품 — 판매량 추정 · 원가 상한 (Score V1 과 별개)
+  const supa = await createClient();
+  const [estimates, { data: rankDays }] = await Promise.all([
+    loadEstimates(allProducts.map((p) => p.id), details),
+    supa.from("keyword_product_ranks").select("keyword_id, captured_on").order("captured_on", { ascending: false }).limit(5000),
+  ]);
+  const lastCollectedOf = new Map<string, string>();
+  for (const r of rankDays ?? []) if (!lastCollectedOf.has(r.keyword_id)) lastCollectedOf.set(r.keyword_id, r.captured_on);
+  const allowed30Of = (id: string) => estimates.get(id)?.opportunity.allowedCost.find((x) => x.margin === 0.3)?.cost ?? null;
+  const sourcingOf = (id: string) => ({ query: sourcing.queries.get(id) ?? null, links: sourcing.links.get(id) ?? [], detail: details.get(id)?.result ?? null, stage: stageOf.get(id) ?? null, keywordId: analysis?.keyword.id ?? null, allowedCost30: allowed30Of(id) });
   const nameOf = new Map(allProducts.map((p) => [p.id, p.productName ?? "(이름 없음)"]));
   const shortlisted = stageRows.filter((r) => stageOf.get(r.productId)!.stage === "SHORTLISTED").map((r) => ({ id: r.productId, name: nameOf.get(r.productId) ?? r.productId.slice(0, 8) }));
   const scopeItems: ScopeItem[] = scopeIds.map((id) => {
@@ -103,7 +115,15 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
         naverConfigured={naverConfigured}
       />
 
+      <EstimatePanel rows={[...estimates.values()]} coupangIdOf={new Map(allProducts.map((p) => [p.id, p.coupangProductId]))} />
+
       <StagePanel counts={stageCounts(stageRows)} shortlisted={shortlisted} scope={scopeItems} />
+
+      <BroadenPanel
+        newCandidates={candidates.counts?.NEW ?? candidates.items.length}
+        top={candidates.items.slice(0, 8).map((c) => ({ keyword: c.keyword, volume: c.searchVolume }))}
+        tracked={keywords.filter((k) => k.isTracking).map((k) => ({ keyword: k.keyword, lastCollected: lastCollectedOf.get(k.id) ?? null }))}
+      />
 
       <Card>
         <CardHeader>

@@ -6,6 +6,14 @@ import type { IngestRecord } from "../shared/types";
 import { start, type PageCollector } from "./common";
 import { productTitle, readProductPage } from "./dom/product";
 
+/** 판매량 추정용 리뷰 날짜 안내 (PHASE 22) — 최신순이어야 서버가 판매 속도 계산에 쓴다 */
+function reviewLine(joined: string): string {
+  const d = joined ? joined.split(",") : [];
+  if (d.length === 0) return "리뷰 날짜 0개 — 리뷰 목록까지 내려 [최신순]을 누른 뒤 다시 수집하면 판매량을 추정합니다";
+  const newest = d.every((x, i) => i === 0 || x <= d[i - 1]);
+  return newest ? `리뷰 날짜 ${d.length}개 (최신순 ${d[d.length - 1]} ~ ${d[0]}) — 판매량 추정에 사용` : `리뷰 날짜 ${d.length}개가 최신순이 아님 — [최신순]을 누른 뒤 다시 수집`;
+}
+
 const won = (v: unknown) => (typeof v === "number" ? `${v.toLocaleString("ko-KR")}원` : "-");
 
 const collector: PageCollector = {
@@ -29,6 +37,7 @@ const collector: PageCollector = {
         `가격 ${won(product.price)}${product.originalPrice ? ` (정가 ${won(product.originalPrice)})` : ""}`,
         `리뷰 ${product.reviewCount ?? "-"} · 평점 ${product.rating ?? "-"}`,
         `배송 ${product.deliveryType ?? "확인 못 함"} · 판매자 ${product.sellerType ?? "확인 못 함"}`,
+        reviewLine(String(raw.observedOnly?.reviewDates ?? "")),
       ],
     };
   },

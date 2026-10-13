@@ -30,11 +30,11 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100);
 export function DiscoverProductCard({
   p,
   compliance = null,
-  sourcing = { query: null, links: [], detail: null, stage: null, keywordId: null },
+  sourcing = { query: null, links: [], detail: null, stage: null, keywordId: null, allowedCost30: null },
 }: {
   p: DiscoverProduct;
   compliance?: ComplianceView | null;
-  sourcing?: { query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; stage?: (StageResult & { watchStatus: string | null }) | null; keywordId?: string | null };
+  sourcing?: { query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; stage?: (StageResult & { watchStatus: string | null }) | null; keywordId?: string | null; allowedCost30?: number | null };
 }) {
   const r = p.preview;
   const status = discoverStatus(r);
@@ -126,7 +126,7 @@ export function DiscoverProductCard({
       </details>
 
       {/* 중국 도매 소싱 (PHASE 18) */}
-      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} detail={sourcing.detail ?? null} inScope={sourcing.stage?.inScope ?? false} blocker={sourcing.stage?.blocker ?? null} />
+      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} detail={sourcing.detail ?? null} inScope={sourcing.stage?.inScope ?? false} blocker={sourcing.stage?.blocker ?? null} allowedCost30={sourcing.allowedCost30 ?? null} />
 
       {/* 데이터 준비 상태 (PHASE 16) — 점수 · 판정을 대체하지 않음 */}
       <details className="rounded-md border px-3 py-2" open={status !== "FINAL"}>
