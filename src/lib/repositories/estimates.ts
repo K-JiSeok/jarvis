@@ -2,6 +2,7 @@ import "server-only";
 
 import { guessCategory } from "@/lib/costs/category";
 import type { DetailResult } from "@/lib/costs/detail";
+import { unitEconomics, type UnitEconomics } from "@/lib/estimate/economics";
 import { estimateOpportunity, type Opportunity } from "@/lib/estimate/opportunity";
 import { estimateSales, type SalesEstimate } from "@/lib/estimate/sales";
 import { listRateCards } from "@/lib/repositories/costs";
@@ -22,6 +23,7 @@ export interface EstimateView {
   price: number | null;
   sales: SalesEstimate;
   opportunity: Opportunity;
+  economics: UnitEconomics | null;
   categoryPath: string | null;
 }
 
@@ -74,7 +76,8 @@ export async function loadEstimates(productIds: string[], details: Map<string, {
     });
     const g = guessCategory(p.name, p.categoryPath);
     const opportunity = estimateOpportunity({ today, price: p.salePrice, sales, cards, salesScope: g.salesScope, feeGroup: g.feeGroup, detail: details.get(id)?.result ?? null });
-    out.set(id, { productId: id, productName: p.name, price: p.salePrice, sales, opportunity, categoryPath: p.categoryPath });
+    const economics = p.salePrice != null ? unitEconomics({ today, price: p.salePrice, cards, salesScope: g.salesScope, feeGroup: g.feeGroup }) : null;
+    out.set(id, { productId: id, productName: p.name, price: p.salePrice, sales, opportunity, economics, categoryPath: p.categoryPath });
   }
   return out;
 }

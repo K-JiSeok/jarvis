@@ -10,6 +10,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const { estimateSales, parseBuyers, isNewestFirst, rateFromRecent, rateFromGrowth, REVIEW_RATE } = await import("../../src/lib/estimate/sales.ts");
 const { estimateOpportunity } = await import("../../src/lib/estimate/opportunity.ts");
 const { rankSuppliers } = await import("../../src/lib/sourcing/recommend.ts");
+const { unitEconomics, ECON_ASSUMPTIONS } = await import("../../src/lib/estimate/economics.ts");
+const { keywordFilter } = await import("../../src/lib/automation/keyword-filter.ts");
 const cards = buildCards(JSON.parse(readFileSync(join(here, "..", "costs", "fixtures", "coupang-rates-2026-10-13.json"), "utf8")));
 
 const tests = [];
@@ -99,6 +101,40 @@ test("공급 후보 추천 순서: 일치도 → 도착 원가 → MOQ → 연�
   const r3 = rankSuppliers([c("a", "UNCLEAR", 1000, 1, 1)], null);
   assert.equal(r3.recommended, null);
   assert.match(r3.note, /불명확/);
+});
+
+test("[PHASE 23] 단위 경제성 (실제 WING 요율 · 테이블웨어 · 극소형): 4,900원 단품 비추천 · 9,900원 주의 · 19,900원 적정", () => {
+  const e = (price) => unitEconomics({ today: "2026-10-13", price, cards, salesScope: "주방용품", feeGroup: "주방 > 테이블웨어" });
+  const a = e(4900);
+  // 4,900 ÷ 1.1 − 529 − (700 + 1,350) − 광고 490 − 마진 1,470 = −85
+  assert.equal(a.single.allowedPerUnit, Math.round(4900 / 1.1 - 4900 * 0.108 - 2050 - 490 - 1470));
+  assert.equal(a.grade, "AVOID");
+  assert.equal(e(9900).grade, "CAUTION");
+  assert.equal(e(9900).single.allowedPerUnit, 1821);
+  assert.equal(e(19900).grade, "OK");
+  assert.equal(e(19900).single.allowedPerUnit, 5082);
+});
+
+test("[PHASE 23] 묶음 시나리오: 4,900원 × 3개 × 0.9 = 13,200원 → 개당 쓸 수 있는 원가가 단품보다 큼 · 할인 종료 뒤(2027-02-01) 기본 비용이면 더 나빠짐", () => {
+  const x = unitEconomics({ today: "2026-10-13", price: 4900, cards, salesScope: "주방용품", feeGroup: "주방 > 테이블웨어" });
+  const b3 = x.bundles.find((b) => b.units === 3);
+  assert.equal(b3.price, 13200);
+  assert.ok(b3.allowedPerUnit > x.single.allowedPerUnit);
+  assert.equal(x.bestBundle.units, 3);
+  assert.equal(x.promoUntil, "2027-01-31");
+  // 할인 종료 후: 입출고 1,650 + 배송 2,200
+  assert.equal(x.afterPromo.allowedPerUnit, Math.round(4900 / 1.1 - 4900 * 0.108 - 3850 - 490 - 1470));
+  assert.equal(ECON_ASSUMPTIONS.targetMargin, 0.3);
+});
+
+test("[PHASE 23] 키워드 거르기: 브랜드 · 월 10만 이상 한 단어는 일괄 등록에서 제외, 여러 단어 · 일반 키워드는 통과", () => {
+  assert.equal(keywordFilter("쿠쿠", 167700), "BRAND");
+  assert.equal(keywordFilter("다이슨 청소기", 50000), "BRAND");
+  assert.equal(keywordFilter("계산기", 1083700), "TOO_BROAD");
+  assert.equal(keywordFilter("가방", 96500), null); // 10만 미만
+  assert.equal(keywordFilter("캠핑 의자", 120000), null); // 한 단어 아님
+  assert.equal(keywordFilter("나무도마", 16750), null);
+  assert.equal(keywordFilter("코일매트", null), null);
 });
 
 let passed = 0;

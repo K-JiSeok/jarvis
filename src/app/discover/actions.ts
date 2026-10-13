@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { COMPLIANCE_STATUSES, type ComplianceFinding, type ComplianceStatus } from "@/lib/automation/compliance";
 import { runDiscoveryPipeline } from "@/lib/automation/pipeline";
 import { dbErrorMessage, fail, isPgError, type FormState } from "@/lib/forms";
+import { keywordFilter } from "@/lib/automation/keyword-filter";
 import { createKeyword, findKeywordIdByText } from "@/lib/repositories/keywords";
 import { linkOffer } from "@/lib/repositories/sourcing";
 import { addToWatchlist, getWatchlistForProduct, releaseFromWatchlist, updateWatchlistStatus } from "@/lib/repositories/watchlist";
@@ -202,17 +203,26 @@ export async function promoteTopCandidatesAction(_prev: FormState, formData: For
   if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
   const n = Math.min(20, Math.max(1, Number(formData.get("n") ?? 10) || 10));
   const supabase = await createClient();
-  const { data: cands, error } = await supabase
+  // 브랜드 · 너무 넓은 키워드는 건너뛴다 (PHASE 23 · kw-filter-v1) — 후보는 그대로 남고 직접 등록은 가능
+  const { data: pool, error } = await supabase
     .from("keyword_candidates")
-    .select("id, keyword")
+    .select("id, keyword, search_volume")
     .eq("status", "NEW")
     .eq("below_10", false)
     .not("search_volume", "is", null)
     .order("search_volume", { ascending: false })
-    .limit(n);
+    .limit(n * 10);
   if (error) return fail(dbErrorMessage(error));
+  const skipped: string[] = [];
+  const cands = [];
+  for (const c of pool ?? []) {
+    if (cands.length >= n) break;
+    const why = keywordFilter(c.keyword, c.search_volume);
+    if (why) skipped.push(`${c.keyword}(${why === "BRAND" ? "브랜드" : "너무 넓음"})`);
+    else cands.push(c);
+  }
   const done: string[] = [];
-  for (const c of cands ?? []) {
+  for (const c of cands) {
     try {
       let keywordId = await findKeywordIdByText(c.keyword);
       if (!keywordId) keywordId = await createKeyword({ keyword: c.keyword, categoryId: null, isTracking: true });
@@ -224,5 +234,6 @@ export async function promoteTopCandidatesAction(_prev: FormState, formData: For
     }
   }
   revalidatePath("/discover");
-  return { ok: done.length > 0, message: done.length ? `${done.length}개를 추적 키워드로 등록했습니다: ${done.join(", ")}. 다음 자동 실행부터 검색량 · 연관 키워드를 모읍니다.` : "등록할 후보가 없습니다." };
+  const skipTxt = skipped.length ? ` · 건너뜀 ${skipped.length}개: ${skipped.slice(0, 10).join(", ")}` : "";
+  return { ok: done.length > 0, message: done.length ? `${done.length}개를 추적 키워드로 등록했습니다: ${done.join(", ")}. 다음 자동 실행부터 검색량 · 연관 키워드를 모읍니다.${skipTxt}` : `등록할 후보가 없습니다.${skipTxt}` };
 }
