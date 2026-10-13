@@ -15,8 +15,10 @@ import type { Json, TablesInsert } from "@/types/database";
  *
  *   saveOffer        공급 후보 1행 (사이트 · 상품 ID 기준 갱신) + 오늘 가격 이력 1행 (같은 날은 갱신)
  *   linkOffer        쿠팡 상품 ↔ 공급 후보 연결 · 매칭 판정 · 도착 원가 계산 결과 저장 (사용자 선택 상태는 유지)
- *   refreshLinks     전체 연결의 매칭 · 원가 재계산 (환율 · 판매가 변화 반영)
- *   ensureQueries    상품마다 도매 검색어 (사전 버전이 바뀌거나 상품명이 바뀌면 갱신, 사용자가 직접 고친 검색어는 유지)
+ *   refreshLinks     소싱 대상 상품의 연결만 매칭 · 원가 재계산 (환율 · 판매가 변화 반영). 대상 밖 상품의 기존 연결 · 이력은 그대로 둔다
+ *   ensureQueries    소싱 대상 상품만 도매 검색어 (사전 버전이 바뀌거나 상품명이 바뀌면 갱신, 사용자가 직접 고친 검색어는 유지)
+ *   autoLinkOffer    대상 상품 없이 저장된 후보 → 소싱 대상 상품과만 비교해 자동 연결 제안 (PHASE 21: 전체 상품 → 소싱 대상)
+ * 소싱 대상 = 사용자가 [소싱 시작]한 상품 (repositories/stage · lib/discover/stage)
  */
 
 const kstDate = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date(iso));
@@ -228,10 +230,11 @@ export async function linkOffer(productId: string, offerId: string, origin: "TAR
   return { level: match.level, landed, snapshot: inserted && inserted.length > 0 ? "CREATED" : "UNCHANGED" };
 }
 
-/** 대상 상품 없이 저장된 후보 → 등록 상품 전체와 비교해 유사 이상만 자동 연결 제안 (최대 5개) */
-export async function autoLinkOffer(offerId: string): Promise<{ linked: number; checked: number }> {
+/** 대상 상품 없이 저장된 후보 → 소싱 대상 상품과만 비교해 유사 이상만 자동 연결 제안 (최대 5개). 소싱 대상이 없으면 연결하지 않는다 */
+export async function autoLinkOffer(offerId: string, scope: string[]): Promise<{ linked: number; checked: number }> {
+  if (scope.length === 0) return { linked: 0, checked: 0 };
   const supabase = await createClient();
-  const [ctx, { data: o, error }] = await Promise.all([productContexts(), supabase.from("supply_offers").select("*").eq("id", offerId).single()]);
+  const [ctx, { data: o, error }] = await Promise.all([productContexts(scope), supabase.from("supply_offers").select("*").eq("id", offerId).single()]);
   if (error) throw error;
   const offer = toOffer(o);
   const hits = [...ctx.values()]
@@ -242,10 +245,13 @@ export async function autoLinkOffer(offerId: string): Promise<{ linked: number; 
   return { linked: hits.length, checked: ctx.size };
 }
 
-export async function refreshLinks(): Promise<{ refreshed: number; failed: number; snapshotsCreated: number; snapshotsUnchanged: number }> {
+export async function refreshLinks(scope: string[]): Promise<{ refreshed: number; skipped: number; failed: number; snapshotsCreated: number; snapshotsUnchanged: number }> {
   const supabase = await createClient();
-  const { data: links, error } = await supabase.from("product_supply_links").select("product_id, offer_id, origin");
+  const { data: all, error } = await supabase.from("product_supply_links").select("product_id, offer_id, origin");
   if (error) throw error;
+  const inScope = new Set(scope);
+  const links = all.filter((l) => inScope.has(l.product_id));
+  const skipped = all.length - links.length;
   let refreshed = 0;
   let failed = 0;
   let snapshotsCreated = 0;
@@ -260,12 +266,13 @@ export async function refreshLinks(): Promise<{ refreshed: number; failed: numbe
       failed += 1;
     }
   }
-  return { refreshed, failed, snapshotsCreated, snapshotsUnchanged };
+  return { refreshed, skipped, failed, snapshotsCreated, snapshotsUnchanged };
 }
 
-export async function ensureQueries(): Promise<{ created: number; updated: number; kept: number }> {
+export async function ensureQueries(scope: string[]): Promise<{ created: number; updated: number; kept: number }> {
+  if (scope.length === 0) return { created: 0, updated: 0, kept: 0 };
   const supabase = await createClient();
-  const [{ data: prods, error }, { data: cur }] = await Promise.all([supabase.from("products").select("id, product_name"), supabase.from("sourcing_queries").select("product_id, original, method, dict_version")]);
+  const [{ data: prods, error }, { data: cur }] = await Promise.all([supabase.from("products").select("id, product_name").in("id", scope), supabase.from("sourcing_queries").select("product_id, original, method, dict_version").in("product_id", scope)]);
   if (error) throw error;
   const byProduct = new Map((cur ?? []).map((q) => [q.product_id, q]));
   let created = 0;

@@ -130,7 +130,8 @@ export interface DetailResult {
   };
   insufficient: { key: string; label: string; reason: string; howTo: string }[];
   storageTable: { days: number; cost: number }[] | null;
-  qtyTable: { qty: number; unitPrice: string; landedMin: number; landedMax: number; unknown: number }[];
+  /** 주문 수량별 도착 원가 · 필요 자금 (판매 1개 원가 × 판매 단위 수, 미확인 항목 제외 — 하한) */
+  qtyTable: { qty: number; unitPrice: string; landedMin: number; landedMax: number; fundMin: number; fundMax: number; unknown: number }[];
   release: { perUnit: number; freePerMonth: number; source: string } | null;
   usedCards: { kind: RateKind; id: string; scope: string; label: string; checkedOn: string; verification: string; promo: boolean; warnings: string[] }[];
   status: DetailStatus;
@@ -522,7 +523,10 @@ export function calculateCostDetail(i: DetailInput): DetailResult {
     .slice(0, 6)
     .map((q) => {
       const ll = landedLines(c, q);
-      return { qty: q, unitPrice: ll.unitBasis, landedMin: ll.lines.reduce((s, l) => s + (l.min ?? 0), 0), landedMax: ll.lines.reduce((s, l) => s + (l.max ?? 0), 0), unknown: ll.lines.filter((l) => l.status === "UNKNOWN").length };
+      const landedMin = ll.lines.reduce((s, l) => s + (l.min ?? 0), 0);
+      const landedMax = ll.lines.reduce((s, l) => s + (l.max ?? 0), 0);
+      const listings = q / (i.supply?.kind === "OFFER" ? (i.supply.unitsPerListing ?? 1) : 1);
+      return { qty: q, unitPrice: ll.unitBasis, landedMin, landedMax, fundMin: r(landedMin * listings), fundMax: r(landedMax * listings), unknown: ll.lines.filter((l) => l.status === "UNKNOWN").length };
     });
 
   const rel = c.card("RG_RELEASE", "*");

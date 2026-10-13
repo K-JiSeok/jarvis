@@ -7,6 +7,7 @@ import { AREA_LABELS, COMPLIANCE_LABELS } from "@/lib/automation/compliance";
 import { productReadiness } from "@/lib/discover/readiness";
 import type { ComplianceView } from "@/lib/repositories/automation";
 import type { DetailResult } from "@/lib/costs/detail";
+import { STAGE_LABELS, type StageResult } from "@/lib/discover/stage";
 import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
 import { discoverStatus } from "@/lib/discover/summary";
 
@@ -14,6 +15,7 @@ import { ComplianceForm } from "./automation-forms";
 import { ComplianceBadge } from "./automation-panel";
 import { ReadinessList } from "./readiness-list";
 import { SourcingSection } from "./sourcing-section";
+import { StageButtons } from "./stage-forms";
 import { formatPercent, formatShortDate, formatWon } from "@/lib/format";
 import type { DiscoverOrigin, DiscoverProduct } from "@/lib/repositories/discover";
 import { cn } from "@/lib/utils";
@@ -28,11 +30,11 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100);
 export function DiscoverProductCard({
   p,
   compliance = null,
-  sourcing = { query: null, links: [], detail: null },
+  sourcing = { query: null, links: [], detail: null, stage: null, keywordId: null },
 }: {
   p: DiscoverProduct;
   compliance?: ComplianceView | null;
-  sourcing?: { query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null };
+  sourcing?: { query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; stage?: (StageResult & { watchStatus: string | null }) | null; keywordId?: string | null };
 }) {
   const r = p.preview;
   const status = discoverStatus(r);
@@ -61,6 +63,12 @@ export function DiscoverProductCard({
             · {p.origins.map((o) => ORIGIN_LABELS[o]).join(" · ")}
           </p>
           <ComplianceBadge status={compliance?.status ?? null} decidedBy={compliance?.decidedBy ?? null} />
+          {sourcing.stage && (
+            <div className="flex flex-wrap items-center gap-2 pt-1" data-testid="product-stage" data-stage={sourcing.stage.stage}>
+              <Badge variant="outline">{STAGE_LABELS[sourcing.stage.stage]}</Badge>
+              <StageButtons productId={p.id} keywordId={sourcing.keywordId ?? null} stage={sourcing.stage.stage} watchStatus={sourcing.stage.watchStatus} />
+            </div>
+          )}
         </div>
         <div className="text-right" data-testid="discover-verdict">
           {status === "FINAL" ? (
@@ -118,7 +126,7 @@ export function DiscoverProductCard({
       </details>
 
       {/* 중국 도매 소싱 (PHASE 18) */}
-      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} detail={sourcing.detail ?? null} />
+      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} detail={sourcing.detail ?? null} inScope={sourcing.stage?.inScope ?? false} blocker={sourcing.stage?.blocker ?? null} />
 
       {/* 데이터 준비 상태 (PHASE 16) — 점수 · 판정을 대체하지 않음 */}
       <details className="rounded-md border px-3 py-2" open={status !== "FINAL"}>

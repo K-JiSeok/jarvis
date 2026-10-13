@@ -109,8 +109,13 @@ const STATUS: Record<SupplyLinkView["userStatus"], string> = { CANDIDATE: "후�
 const ORIGIN: Record<SupplyLinkView["origin"], string> = { TARGET: "이 상품을 찾다 저장", AUTO: "자동 매칭 제안", USER: "직접 연결" };
 
 /** 상품 카드 안의 중국 도매 소싱 (PHASE 18) — 검색어 · 검색 링크 · 공급 후보 비교 · 도착 원가 · 예상 수익성 */
-export function SourcingSection({ productId, query, links, detail = null }: { productId: string; query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null }) {
-  const searches = query ? searchLinks({ zh: query.zh ?? "", en: query.en ?? "", koCore: query.ko ?? "" }, productId) : [];
+export function SourcingSection({ productId, query, links: rawLinks, detail = null, inScope = true, blocker = null }: { productId: string; query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; inScope?: boolean; blocker?: string | null }) {
+  // 소싱 대상(사용자가 [소싱 시작]한 상품)만 검색 링크 · 상세 원가. 대상이 아니어도 기존 공급 후보 · 원가 기록은 보여 준다 (지우지 않음)
+  const searches = inScope && query ? searchLinks({ zh: query.zh ?? "", en: query.en ?? "", koCore: query.ko ?? "" }, productId) : [];
+  // 비교 순서: 사용자 선택 → 일치도(확정 > 유사 > 불명확) → 제외는 맨 뒤. 가격순이 아니며 최종 선정은 사용자가 한다
+  const ORDER = { SELECTED: 0, CANDIDATE: 1, REJECTED: 3 } as const;
+  const LV = { HIGH: 0, SIMILAR: 1, UNCLEAR: 2 } as const;
+  const links = [...rawLinks].sort((a, b) => ORDER[a.userStatus] - ORDER[b.userStatus] || LV[a.matchLevel] - LV[b.matchLevel]);
   const active = links.filter((l) => l.userStatus !== "REJECTED");
   const states = supplyState(links);
   const selected = links.filter((l) => l.userStatus === "SELECTED");
@@ -127,11 +132,16 @@ export function SourcingSection({ productId, query, links, detail = null }: { pr
             </span>
           ))}
         </div>
-        {detail && <DetailSummary productId={productId} d={detail} />}
+        {!inScope && (
+          <p className="rounded border border-dashed px-2 py-1" data-testid="out-of-scope">
+            소싱 대상 아님{blocker ? ` — ${blocker}` : ""}. 검색 링크 · 원가 계산을 하지 않습니다{links.length ? ` (기존 공급 후보 ${links.length}개 · 원가 기록은 그대로 남아 있음)` : ""}.
+          </p>
+        )}
+        {inScope && detail && <DetailSummary productId={productId} d={detail} />}
         {selected.map((l) => (
           <SelectedCost key={l.linkId} l={l} />
         ))}
-        {query ? (
+        {!inScope ? null : query ? (
           <div className="space-y-1" data-testid="sourcing-query">
             <p>
               검색어 (사전 번역 {query.dictVersion ?? query.method} — 부정확할 수 있어 원문 검색도 같이):{" "}
@@ -153,7 +163,7 @@ export function SourcingSection({ productId, query, links, detail = null }: { pr
             </p>
           </div>
         ) : (
-          <p className="text-muted-foreground">검색어 없음 — 다음 자동 발굴 실행에서 만듭니다.</p>
+          <p className="text-muted-foreground">검색어 없음 — 다음 자동 실행에서 만듭니다 (소싱 대상 상품만).</p>
         )}
 
         {links.length === 0 ? (
@@ -184,6 +194,9 @@ export function SourcingSection({ productId, query, links, detail = null }: { pr
                         <div className="text-muted-foreground">
                           {SUPPLY_SITE_LABELS[l.offer.site]} · {l.offer.supplierName ?? "공급업체 미확인"}
                           {l.offer.supplierMeta?.years != null && ` · ${l.offer.supplierMeta.years}년`} · {ORIGIN[l.origin]} · {STATUS[l.userStatus]}
+                        </div>
+                        <div className="text-muted-foreground" data-testid="supplier-trust">
+                          판매자 정보 (사이트 표시값): 연차 {l.offer.supplierMeta?.years ?? "확인 불가"} · 평점 {l.offer.supplierMeta?.rating ?? "확인 불가"} · 위치 {l.offer.supplierMeta?.location ?? "확인 불가"} · 거래 · 인증 · 시험성적서 자료: 확인 불가 (수집하지 않음)
                         </div>
                         <div className="text-muted-foreground">
                           {[l.offer.material, l.offer.sizeText, l.offer.weightKg != null ? `${l.offer.weightKg}kg` : null].filter(Boolean).join(" · ") || "속성 없음"} · 수집 {l.offer.lastCapturedAt.slice(0, 10)}
@@ -260,7 +273,7 @@ export function SourcingSection({ productId, query, links, detail = null }: { pr
               </tbody>
             </table>
             <p className="text-muted-foreground mt-1">
-              가장 싼 후보를 자동으로 고르지 않습니다 — 일치도 · 구성 수량 · MOQ · 배송비를 함께 보고 [선택]하세요. 도착 원가는 미확인 비용(중국 내 배송 · 구매대행 · 통관 수수료 ·
+              정렬: 내가 선택한 후보 → 일치도(확정 · 유사 · 불명확) → 제외 순 (가격순 아님 · 점수 · 등급을 매기지 않음). 가장 싼 후보를 자동으로 고르지 않습니다 — 일치도 · 사양 · 구성 수량 · MOQ · 가격 구간 · 배송비 · 판매자 정보를 함께 보고 [선택]하세요. 도착 원가는 미확인 비용(중국 내 배송 · 구매대행 · 통관 수수료 ·
               국내 배송 · 광고비)을 넣지 않은 하한이며, 이 값은 수익성 시나리오로 저장하지 않습니다.
             </p>
           </div>

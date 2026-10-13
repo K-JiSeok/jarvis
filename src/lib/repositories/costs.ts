@@ -237,16 +237,18 @@ export async function recordDetail(v: DetailView): Promise<"CREATED" | "UNCHANGE
   return data && data.length > 0 ? "CREATED" : "UNCHANGED";
 }
 
-/** 자동 실행: 공급 후보를 선택했거나 비용 입력이 있는 상품만 계산 · 이력 */
-export async function recordAllDetails(): Promise<{ products: number; created: number; unchanged: number; notAnalyzable: number; confirmed: number; estimateOnly: number }> {
+/** 자동 실행: 소싱 대상 상품 중 공급 후보를 선택했거나 비용 입력이 있는 상품만 계산 · 이력 */
+export async function recordAllDetails(scope: string[]): Promise<{ products: number; created: number; unchanged: number; notAnalyzable: number; confirmed: number; estimateOnly: number; outOfScope: number }> {
   const supabase = await createClient();
   const [{ data: sel }, { data: inp }] = await Promise.all([
     supabase.from("product_supply_links").select("product_id").eq("user_status", "SELECTED"),
     supabase.from("product_cost_inputs").select("product_id"),
   ]);
-  const ids = [...new Set([...(sel ?? []).map((r) => r.product_id), ...(inp ?? []).map((r) => r.product_id)])];
+  const inScope = new Set(scope);
+  const candidates = [...new Set([...(sel ?? []).map((r) => r.product_id), ...(inp ?? []).map((r) => r.product_id)])];
+  const ids = candidates.filter((id) => inScope.has(id));
   const views = await loadDetails(ids);
-  const out = { products: views.size, created: 0, unchanged: 0, notAnalyzable: 0, confirmed: 0, estimateOnly: 0 };
+  const out = { products: views.size, created: 0, unchanged: 0, notAnalyzable: 0, confirmed: 0, estimateOnly: 0, outOfScope: candidates.length - ids.length };
   for (const v of views.values()) {
     const r = await recordDetail(v);
     if (r === "CREATED") out.created += 1;

@@ -1,6 +1,7 @@
 import { adaptSupplierPage, type RawSupplierPageInput } from "@/lib/collectors/supplier/page";
 import { apiJson, authenticate, preflight } from "@/lib/ingest/api-auth";
 import { autoLinkOffer, linkOffer, saveOffer } from "@/lib/repositories/sourcing";
+import { listSourcingScope } from "@/lib/repositories/stage";
 import { MATCH_LABELS } from "@/lib/sourcing/matching";
 import { withSupabaseClient } from "@/lib/supabase/server";
 
@@ -58,7 +59,9 @@ export async function POST(request: Request) {
         const l = await linkOffer(target, saved.id, "TARGET");
         return { saved, target: { level: l.level, label: MATCH_LABELS[l.level], landed: l.landed?.landed ?? null, confidence: l.landed?.confidence ?? null }, auto: null };
       }
-      return { saved, target: null, auto: await autoLinkOffer(saved.id) };
+      // 대상 상품 없이 저장: 소싱 대상(사용자가 [소싱 시작]한 상품)과만 비교 — 없으면 후보만 저장하고 연결하지 않음
+      const { scope } = await listSourcingScope();
+      return { saved, target: null, auto: await autoLinkOffer(saved.id, scope) };
     });
     return apiJson(ctx.origin, {
       ok: true,

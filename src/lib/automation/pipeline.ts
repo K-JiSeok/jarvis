@@ -10,6 +10,7 @@ import { listKeywords } from "@/lib/repositories/keywords";
 import { listSearchObservations } from "@/lib/repositories/search-observations";
 import { recordAllDetails } from "@/lib/repositories/costs";
 import { ensureQueries, refreshLinks } from "@/lib/repositories/sourcing";
+import { listSourcingScope } from "@/lib/repositories/stage";
 import { getFxRate } from "@/lib/sourcing/fx";
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/types/database";
@@ -331,12 +332,18 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
 
     // 5. 중국 도매 소싱 (PHASE 18): 검색어 · 환율 · 공급 후보 매칭 · 도착 원가 재계산 ------------------
     //    공급 상품 자체는 서버가 찾지 않는다 (사이트 공식 API 승인 전) — 사용자가 연 페이지에서 저장한 후보만 다시 계산
+    //    PHASE 21: 사용자가 [소싱 시작]한 상품만 (검색어 · 연결 재계산 · 상세 원가). 0개면 건너뛴다 — 다른 상품의 기존 기록은 그대로
     await step("sourcing", async (): Promise<StepOut> => {
-      const q = await ensureQueries();
+      const { scope, total } = await listSourcingScope();
+      summary.sourcingScope = scope.length;
+      if (scope.length === 0) {
+        return { status: "SKIPPED", counts: { products: total, scope: 0, skippedNotSelected: total }, note: "소싱 대상 상품 0개 — 상품을 후보로 선택한 뒤 [소싱 시작]해야 공급 후보 · 원가 계산을 합니다 (발굴은 그대로 진행)" };
+      }
+      const q = await ensureQueries(scope);
       const fx = await Promise.all(["USD", "CNY"].map(async (c) => [c, await getFxRate(c)] as const));
-      const l = await refreshLinks();
-      // 상세 원가 (PHASE 20 · cost-detail-v1): 공급 후보를 선택했거나 비용 입력이 있는 상품만 · 같은 입력이면 이력 그대로
-      const d = await recordAllDetails();
+      const l = await refreshLinks(scope);
+      // 상세 원가 (PHASE 20 · cost-detail-v1): 소싱 대상 중 공급 후보를 선택했거나 비용 입력이 있는 상품만 · 같은 입력이면 이력 그대로
+      const d = await recordAllDetails(scope);
       const { count: selected } = await supabase.from("product_supply_links").select("id", { count: "exact", head: true }).eq("user_status", "SELECTED");
       const { count: costSnapshots } = await supabase.from("supply_cost_snapshots").select("id", { count: "exact", head: true });
       const { count: offers } = await supabase.from("supply_offers").select("id", { count: "exact", head: true });
@@ -344,6 +351,11 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       summary.supplyLinks = l.refreshed;
       return {
         counts: {
+          products: total,
+          scope: scope.length,
+          skippedNotSelected: total - scope.length,
+          linksSkippedOutOfScope: l.skipped,
+          detailOutOfScope: d.outOfScope,
           queriesCreated: q.created,
           queriesUpdated: q.updated,
           queriesKept: q.kept,

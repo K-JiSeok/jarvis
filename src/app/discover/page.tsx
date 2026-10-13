@@ -5,6 +5,9 @@ import { DataPointValue } from "@/components/common/data-point-value";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { AutomationPanel } from "@/components/discover/automation-panel";
+import { StagePanel, type ScopeItem } from "@/components/discover/stage-panel";
+import { productStage, stageCounts } from "@/lib/discover/stage";
+import { loadStageRows } from "@/lib/repositories/stage";
 import { DiscoverProductCard } from "@/components/discover/discover-product-card";
 import { ReadinessList } from "@/components/discover/readiness-list";
 import { NAVER_PROXY_NOTE } from "@/components/keywords/naver-volume-form";
@@ -60,8 +63,19 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
     listProducts(),
   ]);
   const sorted = analysis ? sortForDiscover(analysis.products) : [];
-  const [sourcing, details] = await Promise.all([listSourcing(sorted.map((p) => p.id)), loadDetails(sorted.map((p) => p.id))]);
-  const sourcingOf = (id: string) => ({ query: sourcing.queries.get(id) ?? null, links: sourcing.links.get(id) ?? [], detail: details.get(id)?.result ?? null });
+  // 단계 (PHASE 21): 상세 원가는 소싱 대상(사용자가 [소싱 시작]한 상품)만 계산한다
+  const stageRows = await loadStageRows();
+  const stageOf = new Map(stageRows.map((r) => [r.productId, { ...productStage(r), watchStatus: r.watchStatus }]));
+  const scopeIds = stageRows.filter((r) => stageOf.get(r.productId)!.inScope).map((r) => r.productId);
+  const [sourcing, details] = await Promise.all([listSourcing(sorted.map((p) => p.id)), loadDetails(scopeIds)]);
+  const sourcingOf = (id: string) => ({ query: sourcing.queries.get(id) ?? null, links: sourcing.links.get(id) ?? [], detail: details.get(id)?.result ?? null, stage: stageOf.get(id) ?? null, keywordId: analysis?.keyword.id ?? null });
+  const nameOf = new Map(allProducts.map((p) => [p.id, p.productName ?? "(이름 없음)"]));
+  const shortlisted = stageRows.filter((r) => stageOf.get(r.productId)!.stage === "SHORTLISTED").map((r) => ({ id: r.productId, name: nameOf.get(r.productId) ?? r.productId.slice(0, 8) }));
+  const scopeItems: ScopeItem[] = scopeIds.map((id) => {
+    const s = stageOf.get(id)!;
+    const d = details.get(id)?.result;
+    return { id, name: nameOf.get(id) ?? id.slice(0, 8), stage: s.stage, blocker: s.blocker ?? (d && d.status !== "CONFIRMED" ? `확인 안 된 필수 비용 ${d.confirmed.blocking.length}개` : null), cost: d?.status ?? "NOT_ANALYZABLE" };
+  });
   // 판매 불가(사용자 확인) 상품은 일반 후보에서 빼고 아래에 사유와 함께 따로 둔다 (기록 유지)
   const excluded = sorted.filter((p) => compliance.get(p.id)?.status === "BLOCKED");
   const products = sorted.filter((p) => compliance.get(p.id)?.status !== "BLOCKED");
@@ -88,6 +102,8 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
         totals={{ products: allProducts.length, compliance: complianceCounts, unscreened: allProducts.filter((p) => !compliance.has(p.id)).length }}
         naverConfigured={naverConfigured}
       />
+
+      <StagePanel counts={stageCounts(stageRows)} shortlisted={shortlisted} scope={scopeItems} />
 
       <Card>
         <CardHeader>

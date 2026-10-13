@@ -164,7 +164,7 @@ export function CostResult({ result: d }: { result: DetailResult }) {
         )}
         {d.qtyTable.length > 0 && (
           <section>
-            <h3 className="mb-1 font-semibold">주문 수량별 도착 원가 (판매 1개 · 쿠팡 비용 전)</h3>
+            <h3 className="mb-1 font-semibold">주문 수량별 도착 원가 (판매 1개 · 쿠팡 비용 전) · 필요 자금 (미확인 항목 제외 — 실제는 더 큼)</h3>
             <table className="text-xs" data-testid="qty-table">
               <tbody>
                 {d.qtyTable.map((q) => (
@@ -172,6 +172,7 @@ export function CostResult({ result: d }: { result: DetailResult }) {
                     <td className="pr-4">{q.qty.toLocaleString("ko-KR")}개</td>
                     <td className="pr-4">{q.unitPrice}</td>
                     <td className="pr-4 tabular-nums">{range(q.landedMin, q.landedMax)}</td>
+                    <td className="pr-4 tabular-nums">필요 자금 {range(q.fundMin, q.fundMax)}</td>
                     <td className="text-muted-foreground">{q.unknown ? `미확인 ${q.unknown}개 제외` : ""}</td>
                   </tr>
                 ))}

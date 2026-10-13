@@ -1,4 +1,4 @@
-// npm run test:automation — PHASE 17 자동 발굴 순수 함수 (키워드 후보 · 상품 자동 선정 · 판매 가능성 사전 검토)
+// npm run test:automation — PHASE 17 자동 발굴 순수 함수 (키워드 후보 · 상품 자동 선정 · 판매 가능성 사전 검토) · PHASE 21 소싱 대상 단계
 import assert from "node:assert/strict";
 
 const { candidatesFromRelated } = await import("../../src/lib/automation/discovery.ts");
@@ -146,6 +146,69 @@ test("판매 가능성: 공급 가능성은 항상 근거 부족 · 자동 판�
   assert.ok(isGeneralCandidate("CLEARED") && !isGeneralCandidate("UNKNOWN") && !isGeneralCandidate("REQUIRES_CERTIFICATION"));
   assert.ok(isExcluded("BLOCKED") && !isExcluded("MANUAL_REVIEW"));
   assert.equal(COMPLIANCE_RULE_VERSION, "compliance-rules-v1");
+});
+
+// 발굴 → 후보 → 소싱 단계 (PHASE 21) ----------------------------------------------------
+const { productStage, sourcingScope, stageCounts, SOURCING_SCOPE_STATUSES } = await import("../../src/lib/discover/stage.ts");
+const { readFileSync: readSrc } = await import("node:fs");
+const row = (id, watchStatus, linkStatuses = [], blockedByUser = false) => ({ productId: id, watchStatus, linkStatuses, blockedByUser });
+
+test("[PHASE 21] 선택 상품 0개: 발굴 상품이 있어도 소싱 대상 0 (미검토 · 후보 · 제외 모두 대상 아님)", () => {
+  const rows = [row("a", null), row("b", null), row("c", "WATCHING"), row("d", "DROPPED")];
+  assert.deepEqual(sourcingScope(rows), []);
+  const c = stageCounts(rows);
+  assert.equal(c.total, 4);
+  assert.equal(c.inScope, 0);
+  assert.equal(c.DISCOVERED, 2);
+  assert.equal(c.SHORTLISTED, 1);
+  assert.equal(c.REJECTED, 1);
+});
+
+test("[PHASE 21] 1개 [소싱 시작] → 그 상품만 대상 / 여러 개 → 고른 것만 대상", () => {
+  assert.deepEqual(sourcingScope([row("a", "SOURCING"), row("b", null), row("c", "WATCHING")]), ["a"]);
+  assert.deepEqual(sourcingScope([row("a", "SOURCING"), row("b", "SOURCING"), row("c", "WATCHING"), row("d", null), row("e", "SOURCING")]), ["a", "b", "e"]);
+  // 샘플 · 판매 등 이후 단계도 계속 소싱 대상 (공급 후보 · 원가 갱신)
+  for (const s of SOURCING_SCOPE_STATUSES) assert.equal(productStage(row("x", s)).inScope, true, s);
+});
+
+test("[PHASE 21] 검토 제외 · 판매 중단 · 판매 불가(사용자 판단)는 소싱 단계여도 대상 아님", () => {
+  assert.equal(productStage(row("a", "DROPPED")).inScope, false);
+  assert.equal(productStage(row("a", "STOPPED")).inScope, false);
+  const b = productStage(row("a", "SOURCING", ["SELECTED"], true));
+  assert.equal(b.stage, "BLOCKED");
+  assert.equal(b.inScope, false);
+  assert.match(b.blocker, /판매 불가/);
+});
+
+test("[PHASE 21] 소싱 대상 안의 단계: 공급 후보 없음 → 진행 중 / 제외 아닌 후보 → 확보(검증 아님) / [선택] → 공급업체 선택됨", () => {
+  assert.equal(productStage(row("a", "SOURCING")).stage, "SOURCING");
+  assert.equal(productStage(row("a", "SOURCING", ["REJECTED"])).stage, "SOURCING");
+  assert.equal(productStage(row("a", "SOURCING", ["CANDIDATE", "REJECTED"])).stage, "SOURCED");
+  assert.equal(productStage(row("a", "SOURCING", ["CANDIDATE", "SELECTED"])).stage, "SUPPLIER_SELECTED");
+  assert.match(productStage(row("a", "SOURCING")).blocker, /자동 검색 없음/);
+  // 후보 단계 상품에 예전 공급 후보 기록이 있어도 대상이 아니다 (기록은 지우지 않음)
+  assert.equal(productStage(row("a", "WATCHING", ["SELECTED"])).inScope, false);
+});
+
+test("[PHASE 21] 자동 실행 · 소싱 코드는 사용자의 선택 · 제외 상태를 쓰지 않는다 (관심상품 · 공급 후보 선택 상태 쓰기 없음)", () => {
+  const files = ["src/lib/automation/pipeline.ts", "src/lib/repositories/sourcing.ts", "src/lib/repositories/costs.ts", "src/lib/repositories/stage.ts", "src/app/api/supply/ingest/route.ts"];
+  for (const f of files) {
+    const s = readSrc(f, "utf8");
+    assert.ok(!/from\("watchlist"\)\s*\.(insert|update|upsert|delete)/.test(s), `${f}: watchlist 쓰기`);
+    assert.ok(!/updateWatchlistStatus|addToWatchlist|releaseFromWatchlist/.test(s), `${f}: 관심상품 단계 변경 호출`);
+    assert.ok(!/user_status\s*:/.test(s), `${f}: 공급 후보 선택 상태 쓰기`);
+  }
+  const pipe = readSrc("src/lib/automation/pipeline.ts", "utf8");
+  assert.match(pipe, /listSourcingScope\(\)/);
+  assert.match(pipe, /ensureQueries\(scope\)/);
+  assert.match(pipe, /refreshLinks\(scope\)/);
+  assert.match(pipe, /recordAllDetails\(scope\)/);
+  assert.match(pipe, /scope\.length === 0[\s\S]{0,80}SKIPPED/);
+  const ingest = readSrc("src/app/api/supply/ingest/route.ts", "utf8");
+  assert.match(ingest, /autoLinkOffer\(saved\.id, scope\)/);
+  const src = readSrc("src/lib/repositories/sourcing.ts", "utf8");
+  assert.match(src, /if \(scope\.length === 0\) return \{ linked: 0, checked: 0 \}/);
+  assert.match(src, /if \(scope\.length === 0\) return \{ created: 0, updated: 0, kept: 0 \}/);
 });
 
 let passed = 0;

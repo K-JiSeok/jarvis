@@ -8,6 +8,7 @@ import { runDiscoveryPipeline } from "@/lib/automation/pipeline";
 import { dbErrorMessage, fail, isPgError, type FormState } from "@/lib/forms";
 import { createKeyword, findKeywordIdByText } from "@/lib/repositories/keywords";
 import { linkOffer } from "@/lib/repositories/sourcing";
+import { addToWatchlist, getWatchlistForProduct, releaseFromWatchlist, updateWatchlistStatus } from "@/lib/repositories/watchlist";
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/types/database";
 
@@ -123,4 +124,75 @@ export async function setComplianceAction(productId: string, _prev: FormState, f
   if (error) return fail(dbErrorMessage(error));
   revalidatePath("/discover");
   return { ok: true, message: "판매 가능성 판단을 저장했습니다 (사용자 확인)." };
+}
+
+// 발굴 → 후보 → 소싱 단계 (PHASE 21) -------------------------------------------------
+// 새 상태 컬럼 없이 기존 관심상품 단계를 쓴다: 후보 = WATCHING · 소싱 = SOURCING · 제외 = DROPPED (행 · 이력 보존, 이력은 기존 트리거가 기록)
+// 사용자가 누를 때만 바뀐다 — 자동 실행은 이 단계를 읽기만 한다.
+
+export type StageOp = "SHORTLIST" | "START_SOURCING" | "PAUSE_SOURCING" | "REJECT" | "UNREJECT";
+
+export async function setStageAction(productId: string, keywordId: string | null, _prev: FormState, formData: FormData): Promise<FormState> {
+  if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
+  const op = String(formData.get("op") ?? "") as StageOp;
+  try {
+    const r = await applyStage(productId, keywordId, op);
+    revalidatePath("/discover");
+    revalidatePath("/watchlist");
+    revalidatePath(`/products/${productId}`);
+    return r;
+  } catch (error) {
+    return fail(dbErrorMessage(error));
+  }
+}
+
+async function applyStage(productId: string, keywordId: string | null, op: StageOp): Promise<FormState> {
+  const w = await getWatchlistForProduct(productId);
+  switch (op) {
+    case "SHORTLIST":
+    case "UNREJECT": {
+      const r = await addToWatchlist(productId, keywordId);
+      return { ok: true, message: r === "ALREADY" ? "이미 후보(또는 이후 단계)입니다 — 그대로 둡니다." : r === "RESTORED" ? "제외를 취소하고 후보로 되돌렸습니다 (이전 이력 유지)." : "소싱 검토 후보로 선택했습니다 (매입 확정 아님)." };
+    }
+    case "START_SOURCING":
+      if (w?.status !== "WATCHING") return fail("후보로 선택된 상품만 소싱을 시작할 수 있습니다.");
+      await updateWatchlistStatus(w.id, "SOURCING");
+      return { ok: true, message: "소싱을 시작했습니다 — 검색 링크로 공급 페이지를 열고 확장 프로그램으로 공급 후보를 저장하세요." };
+    case "PAUSE_SOURCING":
+      if (w?.status !== "SOURCING") return fail("소싱 진행 중인 상품만 보류할 수 있습니다.");
+      await updateWatchlistStatus(w.id, "WATCHING");
+      return { ok: true, message: "소싱을 보류하고 후보로 되돌렸습니다 (공급 후보 · 원가 기록은 그대로)." };
+    case "REJECT":
+      if (w?.status === "DROPPED") return { ok: true, message: "이미 검토 제외입니다." };
+      if (!w) await addToWatchlist(productId, keywordId);
+      await releaseFromWatchlist((w ?? (await getWatchlistForProduct(productId)))!.id);
+      return { ok: true, message: "검토에서 제외했습니다 (공급 후보 · 원가 기록은 지우지 않음 · [제외 취소] 가능)." };
+    default:
+      return fail("알 수 없는 작업입니다.");
+  }
+}
+
+/** 선택한 후보 여러 개를 한 번에 소싱 시작 (후보(WATCHING) 상태인 것만 — 나머지는 건너뛰고 사유를 알려 줌) */
+export async function bulkStartSourcingAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
+  const ids = formData.getAll("product_id").map(String).filter((v) => UUID.test(v));
+  if (ids.length === 0) return fail("소싱을 시작할 후보를 체크하세요.");
+  let started = 0;
+  const skipped: string[] = [];
+  try {
+    for (const id of ids) {
+      const w = await getWatchlistForProduct(id);
+      if (w?.status !== "WATCHING") {
+        skipped.push(`${w?.productName ?? id.slice(0, 8)} (${w ? w.status : "후보 아님"})`);
+        continue;
+      }
+      await updateWatchlistStatus(w.id, "SOURCING");
+      started += 1;
+    }
+  } catch (error) {
+    return fail(`${started}개 시작 후 오류: ${dbErrorMessage(error)}`);
+  }
+  revalidatePath("/discover");
+  revalidatePath("/watchlist");
+  return { ok: started > 0, message: `선택 ${ids.length}개 중 ${started}개 소싱 시작${skipped.length ? ` · 건너뜀 ${skipped.length}개: ${skipped.join(", ")}` : ""}` };
 }

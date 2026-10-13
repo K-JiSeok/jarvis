@@ -264,6 +264,9 @@ test("주문 수량별 원가: MOQ 20개(1.2 USD) vs 100개(0.99 USD) · 건당 
   const q100 = d.qtyTable.find((x) => x.qty === 100);
   assert.match(q20.unitPrice, /1\.2 USD/);
   assert.ok(q20.landedMin > q100.landedMin);
+  // MOQ별 필요 자금 = 판매 1개 도착 원가 × 판매 단위 수 (미확인 제외 하한)
+  assert.equal(q20.fundMin, Math.round(q20.landedMin * 20));
+  assert.equal(q100.fundMax, Math.round(q100.landedMax * 100));
   const lo = calculateCostDetail(base({ orderQty: 10 }));
   assert.ok(lo.warnings.some((w) => /최소 주문 수량 20개보다 적습니다/.test(w)));
 });
