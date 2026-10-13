@@ -125,6 +125,11 @@ export function lookup(keyword: string | null, coupangProductIds: string[]): Pro
   return postApi<LookupResult>("/api/extension/lookup", JSON.stringify({ keyword, coupangProductIds }));
 }
 
+/** 도매 상품 페이지 → 공급 후보 저장 (/api/supply/ingest, PHASE 18) */
+export function sendSupply(page: unknown, targetProductId: string | null): Promise<{ ok: boolean; error?: string }> {
+  return postApi<{ ok: boolean; error?: string }>("/api/supply/ingest", JSON.stringify({ page, targetProductId }));
+}
+
 /** 예약 자동 발굴 실행 요청 (/api/automation/run, PHASE 17). 서버가 중복 실행 · 20시간 간격을 막는다 */
 export function runAutomation(): Promise<AutomationResult> {
   return postApi<AutomationResult>("/api/automation/run", JSON.stringify({ trigger: "EXTENSION_ALARM" }));

@@ -22,7 +22,8 @@ export interface SearchLink {
   verified: boolean;
 }
 
-const withPid = (url: string, productId: string | null) => (productId ? `${url}&jarvis_pid=${encodeURIComponent(productId)}` : url);
+// 쿼리와 # 뒤에 모두 넣는다 — 사이트가 주소를 바꾸며(리다이렉트) 모르는 쿼리를 지워도 # 값은 브라우저가 이어 붙인다
+const withPid = (url: string, productId: string | null) => (productId ? `${url}&jarvis_pid=${encodeURIComponent(productId)}#jarvis_pid=${encodeURIComponent(productId)}` : url);
 
 export function searchLinks(q: { zh: string; en: string; koCore: string }, productId: string | null): SearchLink[] {
   const out: SearchLink[] = [];
@@ -44,7 +45,8 @@ export function imageSearchLink(imageUrl: string | null): SearchLink | null {
 /** 검색 페이지 주소의 jarvis_pid (확장 프로그램이 읽는다) */
 export function jarvisPidOf(url: string): string | null {
   try {
-    const v = new URL(url).searchParams.get("jarvis_pid");
+    const u = new URL(url);
+    const v = u.searchParams.get("jarvis_pid") ?? new URLSearchParams(u.hash.replace(/^#/, "")).get("jarvis_pid");
     return v && /^[0-9a-f-]{36}$/i.test(v) ? v : null;
   } catch {
     return null;

@@ -7,6 +7,8 @@ import { collectNaverSearchVolumes, fetchRelatedKeywords } from "@/lib/ingest/na
 import { getDiscoverAnalysis } from "@/lib/repositories/discover";
 import { listKeywords } from "@/lib/repositories/keywords";
 import { listSearchObservations } from "@/lib/repositories/search-observations";
+import { ensureQueries, refreshLinks } from "@/lib/repositories/sourcing";
+import { getFxRate } from "@/lib/sourcing/fx";
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/types/database";
 
@@ -325,7 +327,22 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       return { counts: { screened: rows.length, keptUserDecision: userDecided.size, withCategory: prods.filter((p) => categoryOf.has(p.coupang_product_id)).length, byStatus } };
     });
 
-    // 5. 분석 (Score V1 미리 보기 · 수익성 · 준비 상태) ----------------------------------
+    // 5. 중국 도매 소싱 (PHASE 18): 검색어 · 환율 · 공급 후보 매칭 · 도착 원가 재계산 ------------------
+    //    공급 상품 자체는 서버가 찾지 않는다 (사이트 공식 API 승인 전) — 사용자가 연 페이지에서 저장한 후보만 다시 계산
+    await step("sourcing", async (): Promise<StepOut> => {
+      const q = await ensureQueries();
+      const fx = await Promise.all(["USD", "CNY"].map(async (c) => [c, await getFxRate(c)] as const));
+      const l = await refreshLinks();
+      const { count: offers } = await supabase.from("supply_offers").select("id", { count: "exact", head: true });
+      summary.supplyOffers = offers ?? 0;
+      summary.supplyLinks = l.refreshed;
+      return {
+        counts: { queriesCreated: q.created, queriesUpdated: q.updated, queriesKept: q.kept, offers: offers ?? 0, linksRecalculated: l.refreshed, linksFailed: l.failed, fxUSD: fx[0][1]?.krw ?? null, fxCNY: fx[1][1]?.krw ?? null },
+        note: fx.some(([, r]) => !r) ? "환율을 받지 못한 통화가 있습니다 (원가 계산 멈춤)" : undefined,
+      };
+    });
+
+    // 6. 분석 (Score V1 미리 보기 · 수익성 · 준비 상태) ----------------------------------
     await step("analysis", async (): Promise<StepOut> => {
       const best = new Map<string, "FINAL" | "PROVISIONAL" | "INSUFFICIENT">();
       const profit = new Set<string>();

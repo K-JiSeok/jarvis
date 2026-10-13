@@ -18,6 +18,7 @@ import { formatNumber, formatPercent, formatWon } from "@/lib/format";
 import { naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
 import { listAutomationRuns, listCompliance, listKeywordCandidates } from "@/lib/repositories/automation";
 import { DISCOVER_MAX_PRODUCTS, getDiscoverAnalysis } from "@/lib/repositories/discover";
+import { listSourcing } from "@/lib/repositories/sourcing";
 import { listKeywords } from "@/lib/repositories/keywords";
 import { listProducts } from "@/lib/repositories/products";
 import { listNaverStatus } from "@/lib/repositories/naver-status";
@@ -58,6 +59,8 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
     listProducts(),
   ]);
   const sorted = analysis ? sortForDiscover(analysis.products) : [];
+  const sourcing = await listSourcing(sorted.map((p) => p.id));
+  const sourcingOf = (id: string) => ({ query: sourcing.queries.get(id) ?? null, links: sourcing.links.get(id) ?? [] });
   // 판매 불가(사용자 확인) 상품은 일반 후보에서 빼고 아래에 사유와 함께 따로 둔다 (기록 유지)
   const excluded = sorted.filter((p) => compliance.get(p.id)?.status === "BLOCKED");
   const products = sorted.filter((p) => compliance.get(p.id)?.status !== "BLOCKED");
@@ -233,13 +236,13 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
                   이 키워드와 연결된 등록 상품이 없습니다. 쿠팡에서 이 키워드를 검색한 뒤 확장 프로그램 패널에서 후보 상품을 골라 등록하세요.
                 </p>
               ) : (
-                products.map((p) => <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} />)
+                products.map((p) => <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} sourcing={sourcingOf(p.id)} />)
               )}
               {excluded.length > 0 && (
                 <div className="space-y-2" data-testid="discover-excluded">
                   <h3 className="text-sm font-semibold">판매 불가로 제외된 상품 ({excluded.length}) — 사용자 확인</h3>
                   {excluded.map((p) => (
-                    <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} />
+                    <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} sourcing={sourcingOf(p.id)} />
                   ))}
                 </div>
               )}

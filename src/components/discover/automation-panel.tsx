@@ -14,7 +14,8 @@ const STEP_LABELS: Record<string, string> = {
   "keyword-discovery": "2. 연관 키워드 → 후보",
   "auto-register": "3. 쿠팡 검색 수집 기록 → 미등록 상품 자동 등록",
   compliance: "4. 판매 가능성 사전 검토",
-  analysis: "5. Score V1 미리 보기 · 수익성 · 준비 상태",
+  analysis: "6. Score V1 미리 보기 · 수익성 · 준비 상태",
+  sourcing: "5. 중국 도매 소싱 (검색어 · 환율 · 매칭 · 도착 원가)",
   pipeline: "파이프라인",
 };
 const RUN_STATUS: Record<AutomationRunView["status"], string> = { RUNNING: "실행 중", SUCCEEDED: "성공", PARTIAL: "일부 실패", FAILED: "실패" };

@@ -8,9 +8,9 @@
  *   Chrome 이 켜져 있고 · 확장 프로그램에 로그인돼 있고 · JARVIS 서버가 켜져 있을 때만 실행된다.
  */
 
-import { login, logout, lookup, registerSelected, runAutomation, sendRaw, sendRecords, validSession } from "../shared/api";
+import { login, logout, lookup, registerSelected, runAutomation, sendRaw, sendRecords, sendSupply, validSession } from "../shared/api";
 import { JARVIS_API_BASE, JARVIS_DEV } from "../shared/constants";
-import { getLastAuto, getLastRun, setLastAuto, setLastRun } from "../shared/storage";
+import { getLastAuto, getLastRun, getSupplyTarget, setLastAuto, setLastRun, setSupplyTarget } from "../shared/storage";
 import type { LastRun, Message } from "../shared/types";
 
 const AUTO_ALARM = "jarvis-auto-discovery";
@@ -91,6 +91,13 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
         await setLastRun(run);
         return result;
       }
+      case "jarvis:set-target":
+        await setSupplyTarget(message.target);
+        return { ok: true };
+      case "jarvis:get-target":
+        return getSupplyTarget();
+      case "jarvis:supply":
+        return sendSupply(message.page, message.targetProductId);
       default:
         return { ok: false, error: "알 수 없는 요청" };
     }

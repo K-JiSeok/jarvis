@@ -78,7 +78,8 @@ declare
     'keyword_product_ranks', 'competitors', 'profit_scenarios', 'profit_calculations',
     'scoring_versions', 'opportunity_scores', 'product_risks', 'watchlist', 'watchlist_events',
     'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
-    'automation_runs', 'keyword_candidates', 'product_compliance'];
+    'automation_runs', 'keyword_candidates', 'product_compliance',
+    'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates'];
   v_owner_tables text[] := array_remove(v_expected, 'scoring_versions');
   v_actual text[];
   v_n integer;
@@ -86,7 +87,7 @@ declare
 begin
   select array_agg(tablename::text order by tablename) into v_actual
   from pg_tables where schemaname = 'public';
-  perform pg_temp.jv_assert('S01 테이블 22개 (PHASE 17 자동 발굴 3개 포함)',
+  perform pg_temp.jv_assert('S01 테이블 27개 (PHASE 17 자동 발굴 3 · PHASE 18 소싱 5 포함)',
     v_actual = (select array_agg(x order by x) from unnest(v_expected) x),
     format('actual: %s', v_actual));
 
@@ -103,7 +104,7 @@ begin
 
   select count(*) into v_n from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity;
-  perform pg_temp.jv_assert('S04 RLS 활성화 22개', v_n = 22, format('%s', v_n));
+  perform pg_temp.jv_assert('S04 RLS 활성화 27개', v_n = 27, format('%s', v_n));
 
   foreach t in array v_owner_tables loop
     select count(*) into v_n from pg_policies
@@ -113,7 +114,7 @@ begin
       raise exception 'FAIL S05 owner 정책: % 에 정책 %개', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('S05 owner_id 정책 21개 테이블 × 4 (select/insert/update/delete)');
+  perform pg_temp.jv_pass('S05 owner_id 정책 26개 테이블 × 4 (select/insert/update/delete)');
 
   select count(*) into v_n from pg_policies where schemaname = 'public' and tablename = 'scoring_versions';
   perform pg_temp.jv_assert('S06 scoring_versions 정책 = SELECT 1개', v_n = 1
@@ -1480,6 +1481,42 @@ end;
 $$;
 
 -- ===========================================================================
+-- SP. PHASE 18 중국 도매 소싱 (사용자 A)
+-- ===========================================================================
+do $$
+declare
+  v_offer uuid;
+begin
+  insert into public.sourcing_queries (product_id, original, query_zh, query_en, method, dict_version)
+  values (pg_temp.jv('p1'), '실리콘 트레이', '硅胶托盘', 'silicone tray', 'DICTIONARY', 'sourcing-dict-v1');
+  insert into public.supply_offers (site, site_product_id, url, title, base_price, base_currency, tiers, moq, source_type, confidence, last_captured_at)
+  values ('ALIBABA', '1600527072719', 'https://www.alibaba.com/product-detail/x_1600527072719.html', '실리콘 아이스 큐브 트레이', 0.99, 'USD',
+          '[{"minQty": 20, "maxQty": 99, "amount": 1772, "currency": "KRW"}]', 20, 'EXTENSION', 'A', now())
+  returning id into v_offer;
+  perform pg_temp.jv_set('sp_offer', v_offer::text);
+  insert into public.supply_offer_snapshots (offer_id, captured_on, captured_at, base_price, base_currency, moq) values (v_offer, '2026-10-13', now(), 0.99, 'USD', 20);
+  insert into public.product_supply_links (product_id, offer_id, origin, match_level) values (pg_temp.jv('p1'), v_offer, 'TARGET', 'SIMILAR');
+  insert into public.fx_rates (currency, krw, source, rate_date) values ('USD', 1341.49, 'ECB', '2026-10-09');
+  perform pg_temp.jv_assert('SP01 검색어 · 공급 후보 · 이력 · 연결 · 환율 저장 (owner = A)',
+    (select count(*) = 1 from public.supply_offers where owner_id = pg_temp.jv('user_a'))
+    and (select user_status = 'CANDIDATE' from public.product_supply_links where offer_id = v_offer));
+end;
+$$;
+
+select pg_temp.jv_expect_error('SP02 같은 사이트 · 상품 ID 공급 후보 중복 → 23505',
+  $q$insert into public.supply_offers (site, site_product_id, url, title, source_type, confidence, last_captured_at) values ('ALIBABA', '1600527072719', 'u', 't', 'EXTENSION', 'A', now())$q$, '23505');
+select pg_temp.jv_expect_error('SP03 같은 날 가격 이력 중복 → 23505',
+  $q$insert into public.supply_offer_snapshots (offer_id, captured_on, captured_at) values (pg_temp.jv('sp_offer'), '2026-10-13', now())$q$, '23505');
+select pg_temp.jv_expect_error('SP04 같은 상품 · 공급 후보 연결 중복 → 23505',
+  $q$insert into public.product_supply_links (product_id, offer_id, origin, match_level) values (pg_temp.jv('p1'), pg_temp.jv('sp_offer'), 'AUTO', 'UNCLEAR')$q$, '23505');
+select pg_temp.jv_expect_error('SP05 가격 있는데 통화 없음 → 23514',
+  $q$insert into public.supply_offers (site, site_product_id, url, title, base_price, source_type, confidence, last_captured_at) values ('1688', '712345678901', 'u', 't', 3.5, 'EXTENSION', 'A', now())$q$, '23514');
+select pg_temp.jv_expect_error('SP06 잘못된 사이트 상품 ID → 23514',
+  $q$insert into public.supply_offers (site, site_product_id, url, title, source_type, confidence, last_captured_at) values ('TAOBAO', 'abc', 'u', 't', 'EXTENSION', 'A', now())$q$, '23514');
+select pg_temp.jv_expect_error('SP07 잘못된 매칭 판정 값 → 23514',
+  $q$update public.product_supply_links set match_level = 'SAME' where offer_id = pg_temp.jv('sp_offer')$q$, '23514');
+
+-- ===========================================================================
 -- B. 사용자 B 로 RLS 검증 (A 의 데이터에 접근 불가)
 -- ===========================================================================
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('jv.user_b'), 'role', 'authenticated')::text, true);
@@ -1495,13 +1532,14 @@ begin
     'opportunity_scores', 'product_risks', 'watchlist', 'watchlist_events',
     'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
     'automation_runs', 'keyword_candidates', 'product_compliance',
+    'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates',
     'v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual'] loop
     execute format('select count(*) from public.%I', t) into v_n;
     if v_n <> 0 then
       raise exception 'FAIL B01: B 가 % 에서 A 의 행 %개를 봄', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('B01 SELECT 차단 (21개 테이블 + 4개 뷰)');
+  perform pg_temp.jv_pass('B01 SELECT 차단 (26개 테이블 + 4개 뷰)');
 
   update public.products set product_name = 'hacked';
   get diagnostics v_n = row_count;
@@ -1540,6 +1578,10 @@ select pg_temp.jv_expect_error('AU12 복합 FK: B 의 판매 가능성 판단이
   format($q$insert into public.product_compliance (product_id, status, decided_by) values ('%s', 'UNKNOWN', 'AUTO')$q$, pg_temp.jv('p1')), '23503');
 select pg_temp.jv_expect_error('AU13 B 는 A 의 실행 기록에 후보를 연결할 수 없음 (복합 FK)',
   format($q$insert into public.keyword_candidates (keyword, normalized_keyword, source_type, source_tool, seed_keyword, last_seen_on, run_id) values ('y', 'y', 'OFFICIAL_API', 't', 's', '2026-10-12', '%s')$q$, pg_temp.jv('au_run')), '23503');
+select pg_temp.jv_expect_error('SP08 복합 FK: B 는 A 의 상품에 공급 후보를 연결할 수 없음',
+  format($q$insert into public.product_supply_links (product_id, offer_id, origin, match_level) values ('%s', '%s', 'USER', 'UNCLEAR')$q$, pg_temp.jv('p1'), pg_temp.jv('sp_offer')), '23503');
+select pg_temp.jv_expect_error('SP09 복합 FK: B 는 A 의 공급 후보에 가격 이력을 넣을 수 없음',
+  format($q$insert into public.supply_offer_snapshots (offer_id, captured_on, captured_at) values ('%s', '2026-10-14', now())$q$, pg_temp.jv('sp_offer')), '23503');
 select pg_temp.jv_expect_error('B09 복합 FK: B 의 관심상품이 A 의 상품을 참조 불가',
   format($q$insert into public.watchlist (product_id) values ('%s')$q$, pg_temp.jv('p1')), '23503');
 select pg_temp.jv_expect_error('B10 B 는 A 의 import 를 롤백할 수 없음 (not found)',

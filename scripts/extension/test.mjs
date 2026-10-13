@@ -61,8 +61,23 @@ test("Extension", "Manifest V3 · 최소 권한 (쿠키 · 네트워크 가로�
   assert.deepEqual(manifest.host_permissions, ["https://www.coupang.com/*", "https://wing.coupang.com/*"]);
   assert.deepEqual(
     manifest.content_scripts.map((c) => c.matches[0]),
-    ["https://www.coupang.com/vp/products/*", "https://www.coupang.com/np/search*", "https://wing.coupang.com/*"],
+    ["https://www.coupang.com/vp/products/*", "https://www.coupang.com/np/search*", "https://wing.coupang.com/*", "https://www.alibaba.com/product-detail/*"],
   );
+  // PHASE 18 도매 사이트: 콘텐츠 스크립트 주입만 (host_permissions 에 추가하지 않음 — 서버 · 백그라운드에서 도매 사이트에 요청하지 않는다)
+  assert.deepEqual(manifest.content_scripts[3].matches, [
+    "https://www.alibaba.com/product-detail/*",
+    "https://www.alibaba.com/trade/search*",
+    "https://detail.1688.com/offer/*",
+    "https://s.1688.com/selloffer/*",
+    "https://item.taobao.com/item.htm*",
+    "https://detail.tmall.com/item.htm*",
+    "https://s.taobao.com/search*",
+  ]);
+});
+test("Extension", "도매 사이트 스크립트는 화면만 읽고 직접 요청 · 탭 이동을 하지 않는다", () => {
+  const js = readFileSync(join(root, "extension", "dist", "content-supplier.js"), "utf8");
+  for (const bad of ["fetch(", "XMLHttpRequest", "tabs.create", "location.href =", "location.assign", ".click()"]) assert.ok(!js.includes(bad), bad);
+  assert.ok(js.includes("jarvis:supply") && js.includes("jarvis:set-target"));
 });
 test("Extension", "예약 자동 발굴은 JARVIS 서버만 부른다 (쿠팡 탭 열기 · 쿠팡 요청 없음)", () => {
   const bg = readFileSync(join(root, "extension", "dist", "background.js"), "utf8");

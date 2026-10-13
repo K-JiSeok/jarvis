@@ -113,6 +113,21 @@ test("매칭: 구성 수량 다름(쿠팡 2개 묶음 · 공급 1개) → 별도
   assert.equal(same.level, "HIGH");
 });
 
+test("매칭 (실제 저장 후보에서 발견): 서빙 트레이 ↔ '레진 트레이 몰드' · '냉동 트레이 큐브 몰드' → 종류 다름 · 불명확", () => {
+  const p = { name: "모나코올리브 모던 실리콘 트레이 대형, 화이트, 1개", categoryPath: null };
+  for (const title of ["다용도 실리콘 레진 트레이 몰드, 불규칙 모양 보석 및 에폭시 주조 몰드", "실리콘 냉동 트레이(뚜껑 포함) 대용량 음식 큐브 몰드 (수프, 육수, 식사 준비용)"]) {
+    const m = matchSupply({ product: p, offer: { ...offer, title, attributes: {}, categoryPath: null } });
+    assert.equal(m.level, "UNCLEAR", title);
+    assert.ok(m.conflicts.some((c) => /공급 상품에 mold 포함/.test(c)), m.conflicts.join(" / "));
+  }
+});
+test("배송비 문구를 숫자로 못 읽으면 원문은 보관하고 원가 계산에는 쓰지 않음", () => {
+  const { offer: o, issues } = adaptSupplierPage({ ...fixture, shippingText: "Shipping 배송비: 공급업체에 문의 운송 시간: Est. 8-10 일" });
+  assert.deepEqual([o.shipping.perQty, o.shipping.amount, o.shipping.currency], [null, null, null]);
+  assert.match(o.shipping.text, /공급업체에 문의/);
+  assert.ok(issues.some((x) => /원문만 보관/.test(x)));
+});
+
 // 도착 원가 · 수익성 -------------------------------------------------------------------------
 const FX = { currency: "USD", krw: 1341.49, source: "ECB 기준환율 (frankfurter.app)", rateDate: "2026-10-09" };
 test("도착 원가: 실제 Alibaba 값 (20개 구간 ₩1,772 · 표시 배송비 20개당 ₩14,215) → 확인 · 추정 · 미확인 구분, 미확인을 0 으로 넣지 않음", () => {

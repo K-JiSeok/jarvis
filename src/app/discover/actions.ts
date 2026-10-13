@@ -30,6 +30,19 @@ export async function runDiscoveryAction(): Promise<FormState> {
   }
 }
 
+/** 공급 후보 선택 · 제외 · 되돌리기 (PHASE 18) */
+export async function setSupplyStatusAction(linkId: string, _prev: FormState, formData: FormData): Promise<FormState> {
+  if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
+  if (!UUID.test(linkId)) return fail("잘못된 후보입니다.");
+  const status = String(formData.get("status") ?? "");
+  if (!["CANDIDATE", "SELECTED", "REJECTED"].includes(status)) return fail("상태를 고르세요.");
+  const supabase = await createClient();
+  const { error } = await supabase.from("product_supply_links").update({ user_status: status }).eq("id", linkId);
+  if (error) return fail(dbErrorMessage(error));
+  revalidatePath("/discover");
+  return { ok: true, message: status === "SELECTED" ? "공급 후보로 선택했습니다." : status === "REJECTED" ? "제외했습니다 (기록은 남습니다)." : "후보로 되돌렸습니다." };
+}
+
 /** 키워드 후보 → 등록 키워드 (추적 중). 후보에는 등록한 키워드를 연결해 둔다 */
 export async function promoteCandidateAction(candidateId: string): Promise<FormState> {
   if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");

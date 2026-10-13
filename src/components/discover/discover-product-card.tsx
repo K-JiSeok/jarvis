@@ -6,11 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { AREA_LABELS, COMPLIANCE_LABELS } from "@/lib/automation/compliance";
 import { productReadiness } from "@/lib/discover/readiness";
 import type { ComplianceView } from "@/lib/repositories/automation";
+import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
 import { discoverStatus } from "@/lib/discover/summary";
 
 import { ComplianceForm } from "./automation-forms";
 import { ComplianceBadge } from "./automation-panel";
 import { ReadinessList } from "./readiness-list";
+import { SourcingSection } from "./sourcing-section";
 import { formatPercent, formatShortDate, formatWon } from "@/lib/format";
 import type { DiscoverOrigin, DiscoverProduct } from "@/lib/repositories/discover";
 import { cn } from "@/lib/utils";
@@ -22,7 +24,15 @@ const LEVEL_LABELS = { LOW: "낮음", MEDIUM: "보통", HIGH: "높음" } as cons
 const fmt = (n: number) => String(Math.round(n * 100) / 100);
 
 /** 상품 1개 분석 카드 — 값은 모두 Score Engine V1 결과 · 기존 Profit 계산 결과 그대로 */
-export function DiscoverProductCard({ p, compliance = null }: { p: DiscoverProduct; compliance?: ComplianceView | null }) {
+export function DiscoverProductCard({
+  p,
+  compliance = null,
+  sourcing = { query: null, links: [] },
+}: {
+  p: DiscoverProduct;
+  compliance?: ComplianceView | null;
+  sourcing?: { query: QueryView | null; links: SupplyLinkView[] };
+}) {
   const r = p.preview;
   const status = discoverStatus(r);
   const calc = p.primaryScenario?.current ?? null;
@@ -105,6 +115,9 @@ export function DiscoverProductCard({ p, compliance = null }: { p: DiscoverProdu
           <ComplianceForm productId={p.id} />
         </div>
       </details>
+
+      {/* 중국 도매 소싱 (PHASE 18) */}
+      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} />
 
       {/* 데이터 준비 상태 (PHASE 16) — 점수 · 판정을 대체하지 않음 */}
       <details className="rounded-md border px-3 py-2" open={status !== "FINAL"}>

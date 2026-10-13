@@ -3,7 +3,7 @@
  * 쿠팡 · WING 로그인 정보는 저장하지 않는다 (확장 프로그램은 쿠팡 계정을 다루지 않는다).
  */
 
-import type { LastAuto, LastRun } from "./types";
+import type { LastAuto, LastRun, SupplyTarget } from "./types";
 
 export interface StoredSession {
   accessToken: string;
@@ -39,4 +39,16 @@ export async function getLastAuto(): Promise<LastAuto | null> {
 
 export async function setLastAuto(lastAuto: LastAuto): Promise<void> {
   await chrome.storage.local.set({ lastAuto });
+}
+
+const TARGET_TTL_MS = 2 * 3_600_000;
+
+export async function getSupplyTarget(): Promise<SupplyTarget | null> {
+  const { supplyTarget } = await chrome.storage.local.get("supplyTarget");
+  const t = supplyTarget as SupplyTarget | undefined;
+  return t && Date.now() - Date.parse(t.at) < TARGET_TTL_MS ? t : null;
+}
+
+export async function setSupplyTarget(target: SupplyTarget): Promise<void> {
+  await chrome.storage.local.set({ supplyTarget: target });
 }

@@ -74,6 +74,7 @@ for (const [name, file] of [
   ["content-product", "content/coupang-product.ts"],
   ["content-search", "content/coupang-search.ts"],
   ["content-wing", "content/coupang-wing.ts"],
+  ["content-supplier", "content/supplier.ts"],
   ["popup", "popup/popup.ts"],
 ]) {
   await build({ ...common, entryPoints: [src(file)], outfile: join(out, `${name}.js`), format: "iife" });

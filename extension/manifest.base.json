@@ -12,6 +12,19 @@
   "content_scripts": [
     { "matches": ["https://www.coupang.com/vp/products/*"], "js": ["content-product.js"], "run_at": "document_idle" },
     { "matches": ["https://www.coupang.com/np/search*"], "js": ["content-search.js"], "run_at": "document_idle" },
-    { "matches": ["https://wing.coupang.com/*"], "js": ["content-wing.js"], "run_at": "document_idle" }
+    { "matches": ["https://wing.coupang.com/*"], "js": ["content-wing.js"], "run_at": "document_idle" },
+    {
+      "matches": [
+        "https://www.alibaba.com/product-detail/*",
+        "https://www.alibaba.com/trade/search*",
+        "https://detail.1688.com/offer/*",
+        "https://s.1688.com/selloffer/*",
+        "https://item.taobao.com/item.htm*",
+        "https://detail.tmall.com/item.htm*",
+        "https://s.taobao.com/search*"
+      ],
+      "js": ["content-supplier.js"],
+      "run_at": "document_idle"
+    }
   ]
 }

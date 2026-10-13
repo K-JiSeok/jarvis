@@ -46,8 +46,8 @@ export interface CollectedSupplyOffer {
   /** kg — 총중량(포장 포함) 우선, 없으면 제품 무게 */
   weightKg: number | null;
   packageSizeText: string | null;
-  /** 사이트 표시 배송비 (N개당 금액) */
-  shipping: { perQty: number; amount: number; currency: string; text: string } | null;
+  /** 사이트 표시 배송비 (N개당 금액). 숫자로 못 읽으면 원문만 (perQty · amount · currency = null) */
+  shipping: { perQty: number | null; amount: number | null; currency: string | null; text: string } | null;
   issues: string[];
 }
 
@@ -208,7 +208,10 @@ export function adaptSupplierPage(raw: RawSupplierPageInput): { offer: Collected
     const m = raw.shippingText.replace(/,/g, "").match(/(\d+)\s*개당\s*([₩$¥￥]|US\$)?\s*(\d+(?:\.\d+)?)/);
     const cur = m ? currencyOf(m[2] ?? raw.shippingText) : null;
     if (m && cur) shipping = { perQty: Number(m[1]), amount: Number(m[3]), currency: cur, text: raw.shippingText.slice(0, 200) };
-    else issues.push("배송비 문구를 숫자로 읽지 못함 (원문만 보관)");
+    else {
+      shipping = { perQty: null, amount: null, currency: null, text: raw.shippingText.slice(0, 200) };
+      issues.push("배송비 문구를 숫자로 읽지 못함 (원문만 보관)");
+    }
   }
 
   const card = raw.supplierCardText ?? "";

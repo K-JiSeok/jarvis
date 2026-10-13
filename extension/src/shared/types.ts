@@ -134,7 +134,11 @@ export type Message =
   /** 콘텐츠 스크립트: 이 페이지의 전체 흐름 실행 (검색 = 등록 여부 확인 → 저장 → 후보 표시) */
   | { type: "jarvis:run" }
   | { type: "jarvis:lookup"; keyword: string | null; coupangProductIds: string[] }
-  | { type: "jarvis:register"; input: RegisterInput; counts: CollectCounts; summary: string[] };
+  | { type: "jarvis:register"; input: RegisterInput; counts: CollectCounts; summary: string[] }
+  /** PHASE 18 도매 소싱: 검색 링크의 대상 상품 기억 · 조회 · 상품 페이지 저장 */
+  | { type: "jarvis:set-target"; target: SupplyTarget }
+  | { type: "jarvis:get-target" }
+  | { type: "jarvis:supply"; page: unknown; targetProductId: string | null };
 
 /** 예약 자동 발굴 (chrome.alarms → /api/automation/run) 마지막 결과 — PHASE 17 */
 export interface LastAuto {
@@ -155,4 +159,12 @@ export interface AutomationResult {
   runId?: string | null;
   status?: string;
   steps?: { name: string; status: string; error: string | null }[];
+}
+
+/** JARVIS 검색 링크(jarvis_pid)로 찾기 시작한 상품 — 2시간 동안 기억 */
+export interface SupplyTarget {
+  productId: string;
+  query: string;
+  at: string;
+  site: string;
 }

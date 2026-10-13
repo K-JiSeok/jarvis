@@ -54,9 +54,12 @@ export function matchSupply(i: MatchInput): MatchResult {
   const pt = types(pc);
   const ot = types(oc);
   const typeHit = [...pt].filter((t) => ot.has(t));
+  // 공급 상품에만 있는 종류 (예: 쿠팡 서빙 트레이 · 공급 "트레이 몰드") → 같은 '트레이' 단어여도 다른 상품일 수 있다
+  const extra = [...ot].filter((t) => !pt.has(t));
   if (typeHit.length) reasons.push(`종류 일치: ${typeHit.join(", ")}`);
-  else if (pt.size && ot.size) conflicts.push(`종류 다름: 쿠팡 ${[...pt].join(", ")} / 공급 ${[...ot].join(", ")}`);
-  else unknown.push("상품 종류를 사전으로 판단하지 못함");
+  if (typeHit.length && extra.length && pt.size) conflicts.push(`종류 다름: 공급 상품에 ${extra.join(", ")} 포함 (쿠팡 ${[...pt].join(", ")})`);
+  else if (!typeHit.length && pt.size && ot.size) conflicts.push(`종류 다름: 쿠팡 ${[...pt].join(", ")} / 공급 ${[...ot].join(", ")}`);
+  else if (!typeHit.length) unknown.push("상품 종류를 사전으로 판단하지 못함");
 
   const pm = pc.filter((c) => MATERIAL_CONCEPTS.includes(c));
   const om = conceptsOf(`${i.offer.material ?? ""} ${i.offer.title}`).filter((c) => MATERIAL_CONCEPTS.includes(c));

@@ -1,5 +1,5 @@
 // ⚠️ 자동 생성 파일 — 직접 수정하지 않는다.
-// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0019 (PHASE 17 automation_pipeline 포함) 적용 후)
+// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0020 (PHASE 18 supply_sourcing 포함) 적용 후)
 // 다시 만들기: npm run db:types (supabase gen types) — 로컬 대안: npm run db:types:local
 //
 // DB 레벨 원시 타입이다. DOMAIN(source_type_t 등)은 string 으로 나온다.
@@ -197,6 +197,36 @@ export type Database = {
             referencedColumns: ["owner_id", "product_id"]
           },
         ]
+      }
+      fx_rates: {
+        Row: {
+          currency: string
+          fetched_at: string
+          id: string
+          krw: number
+          owner_id: string
+          rate_date: string
+          source: string
+        }
+        Insert: {
+          currency: string
+          fetched_at?: string
+          id?: string
+          krw: number
+          owner_id?: string
+          rate_date: string
+          source: string
+        }
+        Update: {
+          currency?: string
+          fetched_at?: string
+          id?: string
+          krw?: number
+          owner_id?: string
+          rate_date?: string
+          source?: string
+        }
+        Relationships: []
       }
       import_jobs: {
         Row: {
@@ -1254,6 +1284,73 @@ export type Database = {
           },
         ]
       }
+      product_supply_links: {
+        Row: {
+          created_at: string
+          id: string
+          landed: Json | null
+          landed_at: string | null
+          match: Json
+          match_level: string
+          offer_id: string
+          origin: string
+          owner_id: string
+          product_id: string
+          updated_at: string
+          user_status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          landed?: Json | null
+          landed_at?: string | null
+          match?: Json
+          match_level: string
+          offer_id: string
+          origin: string
+          owner_id?: string
+          product_id: string
+          updated_at?: string
+          user_status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          landed?: Json | null
+          landed_at?: string | null
+          match?: Json
+          match_level?: string
+          offer_id?: string
+          origin?: string
+          owner_id?: string
+          product_id?: string
+          updated_at?: string
+          user_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_supply_links_offer_fk"
+            columns: ["owner_id", "offer_id"]
+            isOneToOne: false
+            referencedRelation: "supply_offers"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "product_supply_links_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "product_supply_links_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
+      }
       products: {
         Row: {
           brand: string | null
@@ -1629,6 +1726,227 @@ export type Database = {
           thresholds?: Json
           version?: string
           weights?: Json
+        }
+        Relationships: []
+      }
+      sourcing_queries: {
+        Row: {
+          cavities: number | null
+          created_at: string
+          dict_version: string | null
+          id: string
+          mapped: Json
+          method: string
+          original: string
+          owner_id: string
+          pack_qty: number | null
+          product_id: string
+          query_en: string | null
+          query_ko: string | null
+          query_zh: string | null
+          unmapped: string[]
+          updated_at: string
+        }
+        Insert: {
+          cavities?: number | null
+          created_at?: string
+          dict_version?: string | null
+          id?: string
+          mapped?: Json
+          method: string
+          original: string
+          owner_id?: string
+          pack_qty?: number | null
+          product_id: string
+          query_en?: string | null
+          query_ko?: string | null
+          query_zh?: string | null
+          unmapped?: string[]
+          updated_at?: string
+        }
+        Update: {
+          cavities?: number | null
+          created_at?: string
+          dict_version?: string | null
+          id?: string
+          mapped?: Json
+          method?: string
+          original?: string
+          owner_id?: string
+          pack_qty?: number | null
+          product_id?: string
+          query_en?: string | null
+          query_ko?: string | null
+          query_zh?: string | null
+          unmapped?: string[]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sourcing_queries_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: true
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "sourcing_queries_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: true
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
+      }
+      supply_offer_snapshots: {
+        Row: {
+          base_currency: string | null
+          base_price: number | null
+          captured_at: string
+          captured_on: string
+          id: number
+          moq: number | null
+          offer_id: string
+          owner_id: string
+          shipping: Json | null
+          tiers: Json
+        }
+        Insert: {
+          base_currency?: string | null
+          base_price?: number | null
+          captured_at: string
+          captured_on: string
+          id?: never
+          moq?: number | null
+          offer_id: string
+          owner_id?: string
+          shipping?: Json | null
+          tiers?: Json
+        }
+        Update: {
+          base_currency?: string | null
+          base_price?: number | null
+          captured_at?: string
+          captured_on?: string
+          id?: never
+          moq?: number | null
+          offer_id?: string
+          owner_id?: string
+          shipping?: Json | null
+          tiers?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supply_offer_snapshots_offer_fk"
+            columns: ["owner_id", "offer_id"]
+            isOneToOne: false
+            referencedRelation: "supply_offers"
+            referencedColumns: ["owner_id", "id"]
+          },
+        ]
+      }
+      supply_offers: {
+        Row: {
+          attributes: Json
+          base_currency: string | null
+          base_price: number | null
+          brand: string | null
+          category_path: string | null
+          colors: string[]
+          confidence: string
+          created_at: string
+          first_seen_at: string
+          id: string
+          image_urls: string[]
+          issues: string[]
+          last_captured_at: string
+          material: string | null
+          model: string | null
+          moq: number | null
+          owner_id: string
+          package_size_text: string | null
+          shipping: Json | null
+          site: string
+          site_product_id: string
+          size_text: string | null
+          source_type: string
+          supplier_meta: Json
+          supplier_name: string | null
+          supplier_url: string | null
+          tiers: Json
+          tiers_converted: boolean
+          title: string
+          updated_at: string
+          url: string
+          weight_kg: number | null
+        }
+        Insert: {
+          attributes?: Json
+          base_currency?: string | null
+          base_price?: number | null
+          brand?: string | null
+          category_path?: string | null
+          colors?: string[]
+          confidence: string
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          image_urls?: string[]
+          issues?: string[]
+          last_captured_at: string
+          material?: string | null
+          model?: string | null
+          moq?: number | null
+          owner_id?: string
+          package_size_text?: string | null
+          shipping?: Json | null
+          site: string
+          site_product_id: string
+          size_text?: string | null
+          source_type: string
+          supplier_meta?: Json
+          supplier_name?: string | null
+          supplier_url?: string | null
+          tiers?: Json
+          tiers_converted?: boolean
+          title: string
+          updated_at?: string
+          url: string
+          weight_kg?: number | null
+        }
+        Update: {
+          attributes?: Json
+          base_currency?: string | null
+          base_price?: number | null
+          brand?: string | null
+          category_path?: string | null
+          colors?: string[]
+          confidence?: string
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          image_urls?: string[]
+          issues?: string[]
+          last_captured_at?: string
+          material?: string | null
+          model?: string | null
+          moq?: number | null
+          owner_id?: string
+          package_size_text?: string | null
+          shipping?: Json | null
+          site?: string
+          site_product_id?: string
+          size_text?: string | null
+          source_type?: string
+          supplier_meta?: Json
+          supplier_name?: string | null
+          supplier_url?: string | null
+          tiers?: Json
+          tiers_converted?: boolean
+          title?: string
+          updated_at?: string
+          url?: string
+          weight_kg?: number | null
         }
         Relationships: []
       }
