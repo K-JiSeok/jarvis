@@ -56,6 +56,23 @@ export default async function ProfitPage({ searchParams }: PageProps<"/profit">)
 
       <Card>
         <CardHeader>
+          <CardTitle>상세 원가 (로켓그로스 · 수입 비용)</CardTitle>
+          <CardDescription>
+            쿠팡 판매 수수료 · 로켓그로스 입출고/배송/보관/반품 비용 · 국제 운송 · 관세 · 수입 부가세 · 국내 입고 비용을 항목별로 계산하는 별도 계산기 (cost-detail-v1). 아래 시나리오(profit-v1) · Score V1 마진에는 반영되지 않습니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-3 text-sm">
+          <Link href={productId ? `/profit/cost?product=${productId}` : "/profit/cost"} className="font-medium text-blue-700 hover:underline dark:text-blue-300">
+            상세 원가 계산 →
+          </Link>
+          <Link href="/profit/rates" className="font-medium text-blue-700 hover:underline dark:text-blue-300">
+            비용 설정 · 요율표 →
+          </Link>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>상품 선택</CardTitle>
           <CardDescription>상품을 고르면 시나리오를 저장할 수 있습니다. 상품 없이 계산만 해 볼 수도 있습니다.</CardDescription>
         </CardHeader>

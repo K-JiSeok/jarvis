@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { AREA_LABELS, COMPLIANCE_LABELS } from "@/lib/automation/compliance";
 import { productReadiness } from "@/lib/discover/readiness";
 import type { ComplianceView } from "@/lib/repositories/automation";
+import type { DetailResult } from "@/lib/costs/detail";
 import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
 import { discoverStatus } from "@/lib/discover/summary";
 
@@ -27,11 +28,11 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100);
 export function DiscoverProductCard({
   p,
   compliance = null,
-  sourcing = { query: null, links: [] },
+  sourcing = { query: null, links: [], detail: null },
 }: {
   p: DiscoverProduct;
   compliance?: ComplianceView | null;
-  sourcing?: { query: QueryView | null; links: SupplyLinkView[] };
+  sourcing?: { query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null };
 }) {
   const r = p.preview;
   const status = discoverStatus(r);
@@ -117,7 +118,7 @@ export function DiscoverProductCard({
       </details>
 
       {/* 중국 도매 소싱 (PHASE 18) */}
-      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} />
+      <SourcingSection productId={p.id} query={sourcing.query} links={sourcing.links} detail={sourcing.detail ?? null} />
 
       {/* 데이터 준비 상태 (PHASE 16) — 점수 · 판정을 대체하지 않음 */}
       <details className="rounded-md border px-3 py-2" open={status !== "FINAL"}>

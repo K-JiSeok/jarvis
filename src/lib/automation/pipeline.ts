@@ -8,6 +8,7 @@ import { collectNaverSearchVolumes, fetchRelatedKeywords } from "@/lib/ingest/na
 import { getDiscoverAnalysis } from "@/lib/repositories/discover";
 import { listKeywords } from "@/lib/repositories/keywords";
 import { listSearchObservations } from "@/lib/repositories/search-observations";
+import { recordAllDetails } from "@/lib/repositories/costs";
 import { ensureQueries, refreshLinks } from "@/lib/repositories/sourcing";
 import { getFxRate } from "@/lib/sourcing/fx";
 import { createClient } from "@/lib/supabase/server";
@@ -334,6 +335,8 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       const q = await ensureQueries();
       const fx = await Promise.all(["USD", "CNY"].map(async (c) => [c, await getFxRate(c)] as const));
       const l = await refreshLinks();
+      // 상세 원가 (PHASE 20 · cost-detail-v1): 공급 후보를 선택했거나 비용 입력이 있는 상품만 · 같은 입력이면 이력 그대로
+      const d = await recordAllDetails();
       const { count: selected } = await supabase.from("product_supply_links").select("id", { count: "exact", head: true }).eq("user_status", "SELECTED");
       const { count: costSnapshots } = await supabase.from("supply_cost_snapshots").select("id", { count: "exact", head: true });
       const { count: offers } = await supabase.from("supply_offers").select("id", { count: "exact", head: true });
@@ -351,6 +354,12 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
           costSnapshotsCreated: l.snapshotsCreated,
           costSnapshotsUnchanged: l.snapshotsUnchanged,
           costSnapshotsTotal: costSnapshots ?? 0,
+          detailProducts: d.products,
+          detailCreated: d.created,
+          detailUnchanged: d.unchanged,
+          detailConfirmed: d.confirmed,
+          detailEstimateOnly: d.estimateOnly,
+          detailNotAnalyzable: d.notAnalyzable,
           fxUSD: fx[0][1]?.krw ?? null,
           fxCNY: fx[1][1]?.krw ?? null,
         },

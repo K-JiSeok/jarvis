@@ -1,5 +1,5 @@
 // ⚠️ 자동 생성 파일 — 직접 수정하지 않는다.
-// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0022 (PHASE 19 supply_cost_snapshots 포함) 적용 후)
+// 생성: Supabase 공식 타입 생성 (JARVIS 프로젝트, supabase/migrations 0001~0024 (PHASE 20 cost_rate_cards · cost_settings · product_cost_inputs · product_cost_calculations 포함) 적용 후)
 // 다시 만들기: npm run db:types (supabase gen types) — 로컬 대안: npm run db:types:local
 //
 // DB 레벨 원시 타입이다. DOMAIN(source_type_t 등)은 string 으로 나온다.
@@ -197,6 +197,87 @@ export type Database = {
             referencedColumns: ["owner_id", "product_id"]
           },
         ]
+      }
+      cost_rate_cards: {
+        Row: {
+          checked_on: string
+          created_at: string
+          id: string
+          kind: string
+          note: string | null
+          owner_id: string | null
+          promo_until: string | null
+          rates: Json
+          scope: string
+          source_label: string
+          source_url: string | null
+          valid_from: string
+          valid_to: string | null
+          vat_basis: string
+          verification: string
+        }
+        Insert: {
+          checked_on: string
+          created_at?: string
+          id?: string
+          kind: string
+          note?: string | null
+          owner_id?: string | null
+          promo_until?: string | null
+          rates: Json
+          scope: string
+          source_label: string
+          source_url?: string | null
+          valid_from: string
+          valid_to?: string | null
+          vat_basis: string
+          verification: string
+        }
+        Update: {
+          checked_on?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          note?: string | null
+          owner_id?: string | null
+          promo_until?: string | null
+          rates?: Json
+          scope?: string
+          source_label?: string
+          source_url?: string | null
+          valid_from?: string
+          valid_to?: string | null
+          vat_basis?: string
+          verification?: string
+        }
+        Relationships: []
+      }
+      cost_settings: {
+        Row: {
+          created_at: string
+          id: string
+          items: Json
+          owner_id: string
+          tax_type: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          items?: Json
+          owner_id?: string
+          tax_type?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          items?: Json
+          owner_id?: string
+          tax_type?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       fx_rates: {
         Row: {
@@ -1082,6 +1163,184 @@ export type Database = {
           },
           {
             foreignKeyName: "product_compliance_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: true
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
+      }
+      product_cost_calculations: {
+        Row: {
+          computed_at: string
+          confirmed_profit: number | null
+          engine: string
+          estimated_high: number | null
+          estimated_low: number | null
+          id: string
+          input_hash: string
+          inputs: Json
+          link_id: string | null
+          owner_id: string
+          product_id: string
+          result: Json
+          sale_price: number | null
+          status: string
+        }
+        Insert: {
+          computed_at?: string
+          confirmed_profit?: number | null
+          engine: string
+          estimated_high?: number | null
+          estimated_low?: number | null
+          id?: string
+          input_hash: string
+          inputs: Json
+          link_id?: string | null
+          owner_id?: string
+          product_id: string
+          result: Json
+          sale_price?: number | null
+          status: string
+        }
+        Update: {
+          computed_at?: string
+          confirmed_profit?: number | null
+          engine?: string
+          estimated_high?: number | null
+          estimated_low?: number | null
+          id?: string
+          input_hash?: string
+          inputs?: Json
+          link_id?: string | null
+          owner_id?: string
+          product_id?: string
+          result?: Json
+          sale_price?: number | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_cost_calculations_link_fk"
+            columns: ["owner_id", "link_id"]
+            isOneToOne: false
+            referencedRelation: "product_supply_links"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "product_cost_calculations_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "product_cost_calculations_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: false
+            referencedRelation: "v_product_latest"
+            referencedColumns: ["owner_id", "product_id"]
+          },
+        ]
+      }
+      product_cost_inputs: {
+        Row: {
+          category_confirmed: boolean
+          created_at: string
+          fee_group: string | null
+          height_cm: number | null
+          hs_code: string | null
+          id: string
+          length_cm: number | null
+          memo: string | null
+          order_qty: number | null
+          overrides: Json
+          owner_id: string
+          product_id: string
+          return_rate: number | null
+          sale_price: number | null
+          sales_path: string | null
+          sales_scope: string | null
+          seller_discount: number | null
+          storage_days: number | null
+          tariff_basis: string | null
+          tariff_confirmed: boolean
+          tariff_rate: number | null
+          unit_cost_basis: string | null
+          unit_cost_krw: number | null
+          units_per_listing: number | null
+          updated_at: string
+          weight_kg: number | null
+          width_cm: number | null
+        }
+        Insert: {
+          category_confirmed?: boolean
+          created_at?: string
+          fee_group?: string | null
+          height_cm?: number | null
+          hs_code?: string | null
+          id?: string
+          length_cm?: number | null
+          memo?: string | null
+          order_qty?: number | null
+          overrides?: Json
+          owner_id?: string
+          product_id: string
+          return_rate?: number | null
+          sale_price?: number | null
+          sales_path?: string | null
+          sales_scope?: string | null
+          seller_discount?: number | null
+          storage_days?: number | null
+          tariff_basis?: string | null
+          tariff_confirmed?: boolean
+          tariff_rate?: number | null
+          unit_cost_basis?: string | null
+          unit_cost_krw?: number | null
+          units_per_listing?: number | null
+          updated_at?: string
+          weight_kg?: number | null
+          width_cm?: number | null
+        }
+        Update: {
+          category_confirmed?: boolean
+          created_at?: string
+          fee_group?: string | null
+          height_cm?: number | null
+          hs_code?: string | null
+          id?: string
+          length_cm?: number | null
+          memo?: string | null
+          order_qty?: number | null
+          overrides?: Json
+          owner_id?: string
+          product_id?: string
+          return_rate?: number | null
+          sale_price?: number | null
+          sales_path?: string | null
+          sales_scope?: string | null
+          seller_discount?: number | null
+          storage_days?: number | null
+          tariff_basis?: string | null
+          tariff_confirmed?: boolean
+          tariff_rate?: number | null
+          unit_cost_basis?: string | null
+          unit_cost_krw?: number | null
+          units_per_listing?: number | null
+          updated_at?: string
+          weight_kg?: number | null
+          width_cm?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_cost_inputs_product_fk"
+            columns: ["owner_id", "product_id"]
+            isOneToOne: true
+            referencedRelation: "products"
+            referencedColumns: ["owner_id", "id"]
+          },
+          {
+            foreignKeyName: "product_cost_inputs_product_fk"
             columns: ["owner_id", "product_id"]
             isOneToOne: true
             referencedRelation: "v_product_latest"

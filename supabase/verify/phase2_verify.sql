@@ -80,7 +80,8 @@ declare
     'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
     'automation_runs', 'keyword_candidates', 'product_compliance',
     'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates',
-    'supply_cost_snapshots'];
+    'supply_cost_snapshots',
+    'cost_rate_cards', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations'];
   v_owner_tables text[] := array_remove(v_expected, 'scoring_versions');
   v_actual text[];
   v_n integer;
@@ -88,7 +89,7 @@ declare
 begin
   select array_agg(tablename::text order by tablename) into v_actual
   from pg_tables where schemaname = 'public';
-  perform pg_temp.jv_assert('S01 테이블 28개 (PHASE 17 자동 발굴 3 · PHASE 18 소싱 5 · PHASE 19 원가 이력 1 포함)',
+  perform pg_temp.jv_assert('S01 테이블 32개 (PHASE 17 자동 발굴 3 · PHASE 18 소싱 5 · PHASE 19 원가 이력 1 · PHASE 20 상세 원가 4 포함)',
     v_actual = (select array_agg(x order by x) from unnest(v_expected) x),
     format('actual: %s', v_actual));
 
@@ -105,7 +106,7 @@ begin
 
   select count(*) into v_n from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity;
-  perform pg_temp.jv_assert('S04 RLS 활성화 28개', v_n = 28, format('%s', v_n));
+  perform pg_temp.jv_assert('S04 RLS 활성화 32개', v_n = 32, format('%s', v_n));
 
   foreach t in array v_owner_tables loop
     select count(*) into v_n from pg_policies
@@ -115,7 +116,7 @@ begin
       raise exception 'FAIL S05 owner 정책: % 에 정책 %개', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('S05 owner_id 정책 27개 테이블 × 4 (select/insert/update/delete)');
+  perform pg_temp.jv_pass('S05 owner_id 정책 31개 테이블 × 4 (select/insert/update/delete)');
 
   select count(*) into v_n from pg_policies where schemaname = 'public' and tablename = 'scoring_versions';
   perform pg_temp.jv_assert('S06 scoring_versions 정책 = SELECT 1개', v_n = 1
@@ -1529,6 +1530,57 @@ select pg_temp.jv_expect_error('CS02 원가 이력 수정 금지 → 55000 (덮�
 select pg_temp.jv_expect_error('CS03 같은 입력 이력 중복 → 23505',
   $q$insert into public.supply_cost_snapshots (product_id, offer_id, link_id, input_hash, fee_source, order_qty, unit_price, lines, confirmed_only, confidence, match_level, engine) values (pg_temp.jv('p1'), pg_temp.jv('sp_offer'), pg_temp.jv('sp_link'), 'h1', 'CATEGORY', 1, '{}', '[]', '{}', 'C', 'UNCLEAR', '{}')$q$, '23505');
 
+-- ===========================================================================
+-- CD. PHASE 20 요율표 · 비용 설정 · 상세 원가 이력 (사용자 A)
+-- ===========================================================================
+do $$
+declare
+  v_offer uuid;
+  v_link uuid;
+begin
+  perform pg_temp.jv_assert('CD01 시스템 요율 25행 (공식 페이지 수기 확인 · owner 없음) 읽기',
+    (select count(*) = 25 from public.cost_rate_cards where owner_id is null and verification = 'OFFICIAL_MANUAL')
+    and (select count(*) = 15 from public.cost_rate_cards where kind = 'SALES_FEE')
+    and (select (rates ->> 'rate')::numeric = 0.108 from public.cost_rate_cards where kind = 'SALES_FEE' and scope = '주방용품')
+    and (select (rates -> 'promo' -> 1 ->> 0)::int = 975 from public.cost_rate_cards where kind = 'RG_INOUT' and scope = '주방 > 밀폐저장용기')
+    and (select promo_until = '2027-01-31' from public.cost_rate_cards where kind = 'RG_DELIVERY' and scope = '주방 > 테이블웨어'));
+  insert into public.cost_rate_cards (kind, scope, rates, vat_basis, valid_from, source_label, checked_on, verification)
+  values ('SALES_FEE', '주방용품', '{"rate": 0.1, "exceptions": []}', 'EXCLUDED', '2026-10-13', '[TEST] 사용자 입력', '2026-10-13', 'USER_ENTERED');
+  perform pg_temp.jv_assert('CD02 사용자 요율 행 추가 (owner = A, USER_ENTERED)',
+    (select owner_id = pg_temp.jv('user_a') from public.cost_rate_cards where source_label = '[TEST] 사용자 입력'));
+  insert into public.cost_settings (items, tax_type) values ('{"agentFeeRate": {"value": 0.05, "basis": "QUOTE"}}', 'GENERAL');
+  insert into public.product_cost_inputs (product_id, sales_scope, fee_group, category_confirmed, length_cm, width_cm, height_cm, weight_kg, return_rate)
+  values (pg_temp.jv('p1'), '주방용품', '주방 > 밀폐저장용기', true, 20, 15, 5, 0.2, 0.05);
+  insert into public.supply_offers (site, site_product_id, url, title, source_type, confidence, last_captured_at)
+  values ('1688', '700000000001', 'https://detail.1688.com/offer/700000000001.html', '[TEST] CD 공급 후보', 'EXTENSION', 'A', now()) returning id into v_offer;
+  insert into public.product_supply_links (product_id, offer_id, origin, match_level, user_status) values (pg_temp.jv('p1'), v_offer, 'USER', 'HIGH', 'SELECTED') returning id into v_link;
+  insert into public.product_cost_calculations (product_id, link_id, engine, input_hash, inputs, result, status, sale_price, estimated_low, estimated_high)
+  values (pg_temp.jv('p1'), v_link, 'cost-detail-v1', 'cd-h1', '{}', '{}', 'ESTIMATE_ONLY', 9900, -500, 300);
+  perform pg_temp.jv_assert('CD03 비용 설정 · 상품 비용 입력 · 상세 원가 이력 저장 (owner = A)',
+    (select count(*) = 1 from public.cost_settings where owner_id = pg_temp.jv('user_a'))
+    and (select count(*) = 1 from public.product_cost_inputs where product_id = pg_temp.jv('p1'))
+    and (select confirmed_profit is null from public.product_cost_calculations where input_hash = 'cd-h1'));
+  -- 공급 후보 연결을 지워도 이력은 남고 link_id 만 비움 (수정 금지 트리거가 FK SET NULL 은 허용)
+  delete from public.product_supply_links where id = v_link;
+  perform pg_temp.jv_assert('CD04 연결 삭제 → 이력 보존 · link_id NULL',
+    (select link_id is null and sale_price = 9900 from public.product_cost_calculations where input_hash = 'cd-h1'));
+end;
+$$;
+select pg_temp.jv_expect_error('CD05 요율 행 수정 금지 → 55000 (새 버전 행으로)',
+  $q$update public.cost_rate_cards set note = 'x' where source_label = '[TEST] 사용자 입력'$q$, '55000');
+select pg_temp.jv_expect_error('CD06 사용자가 시스템 요율(owner 없음) 추가 불가 → RLS 42501',
+  $q$insert into public.cost_rate_cards (owner_id, kind, scope, rates, vat_basis, valid_from, source_label, checked_on, verification) values (null, 'RG_RELEASE', '*', '{}', 'EXCLUDED', '2026-10-13', 'x', '2026-10-13', 'OFFICIAL_MANUAL')$q$, '42501');
+select pg_temp.jv_expect_error('CD07 사용자 행을 공식 확인값으로 표시 불가 → 23514',
+  $q$insert into public.cost_rate_cards (kind, scope, rates, vat_basis, valid_from, source_label, checked_on, verification) values ('RG_RELEASE', '*', '{}', 'EXCLUDED', '2026-10-13', 'x', '2026-10-13', 'OFFICIAL_MANUAL')$q$, '23514');
+select pg_temp.jv_expect_error('CD08 상세 원가 이력 수정 금지 → 55000',
+  $q$update public.product_cost_calculations set sale_price = 1 where input_hash = 'cd-h1'$q$, '55000');
+select pg_temp.jv_expect_error('CD09 같은 입력 이력 중복 → 23505',
+  $q$insert into public.product_cost_calculations (product_id, engine, input_hash, inputs, result, status) values (pg_temp.jv('p1'), 'cost-detail-v1', 'cd-h1', '{}', '{}', 'X')$q$, '23505');
+select pg_temp.jv_expect_error('CD10 비용 설정은 사용자당 1행 → 23505',
+  $q$insert into public.cost_settings (items) values ('{}')$q$, '23505');
+select pg_temp.jv_expect_error('CD11 판매자 할인 ≥ 판매가 → 23514',
+  $q$update public.product_cost_inputs set sale_price = 1000, seller_discount = 1000 where product_id = pg_temp.jv('p1')$q$, '23514');
+
 select pg_temp.jv_expect_error('SP07 잘못된 매칭 판정 값 → 23514',
   $q$update public.product_supply_links set match_level = 'SAME' where offer_id = pg_temp.jv('sp_offer')$q$, '23514');
 
@@ -1549,14 +1601,20 @@ begin
     'my_listings', 'sales_results', 'predictions', 'import_jobs', 'import_rows',
     'automation_runs', 'keyword_candidates', 'product_compliance',
     'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates',
-    'supply_cost_snapshots',
+    'supply_cost_snapshots', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations',
     'v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual'] loop
     execute format('select count(*) from public.%I', t) into v_n;
     if v_n <> 0 then
       raise exception 'FAIL B01: B 가 % 에서 A 의 행 %개를 봄', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('B01 SELECT 차단 (27개 테이블 + 4개 뷰)');
+  perform pg_temp.jv_pass('B01 SELECT 차단 (30개 테이블 + 4개 뷰)');
+
+  perform pg_temp.jv_assert('CD12 B 는 시스템 요율만 보고 A 의 요율 행은 못 봄',
+    (select count(*) = 25 from public.cost_rate_cards) and not exists (select 1 from public.cost_rate_cards where owner_id is not null));
+  delete from public.cost_rate_cards;
+  get diagnostics v_n = row_count;
+  perform pg_temp.jv_assert('CD13 B 는 시스템 요율 삭제 불가 (0행)', v_n = 0);
 
   update public.products set product_name = 'hacked';
   get diagnostics v_n = row_count;
@@ -1597,6 +1655,11 @@ select pg_temp.jv_expect_error('AU13 B 는 A 의 실행 기록에 후보를 연�
   format($q$insert into public.keyword_candidates (keyword, normalized_keyword, source_type, source_tool, seed_keyword, last_seen_on, run_id) values ('y', 'y', 'OFFICIAL_API', 't', 's', '2026-10-12', '%s')$q$, pg_temp.jv('au_run')), '23503');
 select pg_temp.jv_expect_error('CS04 복합 FK: B 는 A 의 연결에 원가 이력을 넣을 수 없음',
   format($q$insert into public.supply_cost_snapshots (product_id, offer_id, link_id, input_hash, fee_source, order_qty, unit_price, lines, confirmed_only, confidence, match_level, engine) values ('%s', '%s', '%s', 'hb', 'CATEGORY', 1, '{}', '[]', '{}', 'C', 'UNCLEAR', '{}')$q$, pg_temp.jv('p1'), pg_temp.jv('sp_offer'), pg_temp.jv('sp_link')), '23503');
+select pg_temp.jv_expect_error('CD14 복합 FK: B 는 A 의 상품에 상세 원가 이력을 넣을 수 없음',
+  format($q$insert into public.product_cost_calculations (product_id, engine, input_hash, inputs, result, status) values ('%s', 'cost-detail-v1', 'hb', '{}', '{}', 'X')$q$, pg_temp.jv('p1')), '23503');
+select pg_temp.jv_expect_error('CD15 복합 FK: B 는 A 의 상품에 비용 입력을 넣을 수 없음',
+  format($q$insert into public.product_cost_inputs (product_id) values ('%s')$q$, pg_temp.jv('p1')), '23503');
+
 select pg_temp.jv_expect_error('SP08 복합 FK: B 는 A 의 상품에 공급 후보를 연결할 수 없음',
   format($q$insert into public.product_supply_links (product_id, offer_id, origin, match_level) values ('%s', '%s', 'USER', 'UNCLEAR')$q$, pg_temp.jv('p1'), pg_temp.jv('sp_offer')), '23503');
 select pg_temp.jv_expect_error('SP09 복합 FK: B 는 A 의 공급 후보에 가격 이력을 넣을 수 없음',

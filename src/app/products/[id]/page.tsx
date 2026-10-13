@@ -222,7 +222,12 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
       {profitContext && (
         <Card id="profit">
           <CardHeader>
-            <CardTitle>수익성 분석</CardTitle>
+            <CardTitle>
+              수익성 분석{" "}
+              <Link href={`/profit/cost?product=${id}`} className="text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">
+                상세 원가 (로켓그로스 · 수입 비용) →
+              </Link>
+            </CardTitle>
             <CardDescription>
               판매가 기본값은 현재 판매가, 수수료율 기본값은 카테고리 수수료율입니다. 시나리오를 여러 개 저장해 비교할 수 있습니다 (결과: 자체 계산).
             </CardDescription>

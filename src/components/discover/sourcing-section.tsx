@@ -1,4 +1,8 @@
+import Link from "next/link";
+
+import { CostStateChips } from "@/components/costs/cost-result";
 import { SUPPLY_SITE_LABELS } from "@/lib/collectors/supplier/page";
+import type { DetailResult } from "@/lib/costs/detail";
 import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
 import { SUPPLY_STATE_LABELS, supplyState, type SupplyStateKey } from "@/lib/sourcing/cost-record";
 import { searchLinks } from "@/lib/sourcing/links";
@@ -18,6 +22,35 @@ const STATE_TONE: Partial<Record<SupplyStateKey, string>> = {
   ESTIMATE_ONLY: "border-amber-300 text-amber-700 dark:text-amber-300",
   NOT_COMPUTABLE: "border-red-300 text-red-700 dark:text-red-300",
 };
+
+/** 상세 원가 (PHASE 20 · cost-detail-v1) 요약 — 추천이 아니라 상태 표시 */
+function DetailSummary({ productId, d }: { productId: string; d: DetailResult }) {
+  const a = d.confirmed.outcome;
+  const b = d.estimated;
+  return (
+    <div className="space-y-1 rounded-md border border-violet-200 p-2" data-testid="detail-summary" data-status={d.status}>
+      <p className="flex flex-wrap items-center gap-2 font-semibold">
+        상세 원가 (로켓그로스 · 수입 비용 포함) <CostStateChips result={d} />
+      </p>
+      {d.status === "NOT_ANALYZABLE" ? (
+        <p className="text-muted-foreground">{d.salePrice == null ? "판매가 없음" : "공급 원가 없음 (공급 후보 [선택] 또는 원가 직접 입력)"} → 수익성 분석 불가</p>
+      ) : (
+        <ul className="space-y-0.5">
+          <li>
+            A. 확인된 비용 기준: {a ? `이익 ${won(a.profit)} · 마진 ${pct(a.margin)} · 손익분기 ${won(d.confirmed.breakEven)}` : `산출 불가 — 확인 안 된 필수 항목 ${d.confirmed.blocking.length}개`}
+          </li>
+          <li>
+            B. 추정 포함: {b.worst && b.best ? `이익 ${won(b.worst.profit)} ~ ${won(b.best.profit)}` : "-"}
+            {b.omitted.length > 0 && <span className="text-red-700 dark:text-red-300"> · 미포함 {b.omitted.length}개 (실제 이익은 더 낮음)</span>}
+          </li>
+        </ul>
+      )}
+      <Link href={`/profit/cost?product=${productId}`} className="font-medium text-blue-700 hover:underline dark:text-blue-300">
+        상세 원가 계산 · 비용 입력 →
+      </Link>
+    </div>
+  );
+}
 
 /** 사용자가 선택한 후보: 1) 확인 비용만 2) 추정 포함 3) 산출 불가 + 계산 이력 */
 function SelectedCost({ l }: { l: SupplyLinkView }) {
@@ -76,7 +109,7 @@ const STATUS: Record<SupplyLinkView["userStatus"], string> = { CANDIDATE: "후�
 const ORIGIN: Record<SupplyLinkView["origin"], string> = { TARGET: "이 상품을 찾다 저장", AUTO: "자동 매칭 제안", USER: "직접 연결" };
 
 /** 상품 카드 안의 중국 도매 소싱 (PHASE 18) — 검색어 · 검색 링크 · 공급 후보 비교 · 도착 원가 · 예상 수익성 */
-export function SourcingSection({ productId, query, links }: { productId: string; query: QueryView | null; links: SupplyLinkView[] }) {
+export function SourcingSection({ productId, query, links, detail = null }: { productId: string; query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null }) {
   const searches = query ? searchLinks({ zh: query.zh ?? "", en: query.en ?? "", koCore: query.ko ?? "" }, productId) : [];
   const active = links.filter((l) => l.userStatus !== "REJECTED");
   const states = supplyState(links);
@@ -94,6 +127,7 @@ export function SourcingSection({ productId, query, links }: { productId: string
             </span>
           ))}
         </div>
+        {detail && <DetailSummary productId={productId} d={detail} />}
         {selected.map((l) => (
           <SelectedCost key={l.linkId} l={l} />
         ))}

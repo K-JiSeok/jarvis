@@ -92,7 +92,7 @@ export interface OfferRow {
   lastCapturedAt: string;
 }
 
-type OfferDb = {
+export type OfferDb = {
   id: string;
   site: string;
   url: string;
@@ -113,7 +113,7 @@ type OfferDb = {
   shipping: Json | null;
   last_captured_at: string;
 };
-const toOffer = (r: OfferDb): OfferRow => ({
+export const toOffer = (r: OfferDb): OfferRow => ({
   id: r.id,
   site: r.site as SupplySite,
   url: r.url,
@@ -134,7 +134,7 @@ const toOffer = (r: OfferDb): OfferRow => ({
   lastCapturedAt: r.last_captured_at,
 });
 
-interface ProductCtx {
+export interface ProductCtx {
   id: string;
   name: string;
   categoryPath: string | null;
@@ -143,7 +143,7 @@ interface ProductCtx {
 }
 
 /** 상품 문맥: 이름 · 상품 페이지 카테고리 · 현재 판매가 · 카테고리 수수료율(설정돼 있을 때만) */
-async function productContexts(ids?: string[]): Promise<Map<string, ProductCtx>> {
+export async function productContexts(ids?: string[]): Promise<Map<string, ProductCtx>> {
   const supabase = await createClient();
   let pq = supabase.from("products").select("id, coupang_product_id, product_name, category_id");
   if (ids) pq = pq.in("id", ids);

@@ -18,7 +18,8 @@
     "test:automation": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/automation/test.mjs",
     "test:sourcing": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sourcing/test.mjs",
     "ext:build": "node scripts/extension/build.mjs",
-    "test:extension": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/extension/test.mjs"
+    "test:extension": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/extension/test.mjs",
+    "test:costs": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/costs/test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
