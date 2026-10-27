@@ -103,16 +103,16 @@ test("공급 후보 추천 순서: 일치도 → 도착 원가 → MOQ → 연�
   assert.match(r3.note, /불명확/);
 });
 
-test("[PHASE 23] 단위 경제성 (실제 WING 요율 · 테이블웨어 · 극소형): 4,900원 단품 비추천 · 9,900원 주의 · 19,900원 적정", () => {
+test("[PHASE 23 · unit-econ-v2] 단위 경제성 (실제 WING 요율 · 테이블웨어 · 극소형): 4,900원 단품 비추천 · 9,900원 주의 · 19,900원 적정", () => {
   const e = (price) => unitEconomics({ today: "2026-10-13", price, cards, salesScope: "주방용품", feeGroup: "주방 > 테이블웨어" });
   const a = e(4900);
-  // 4,900 ÷ 1.1 − 529 − (700 + 1,350) − 광고 490 − 마진 1,470 = −85
-  assert.equal(a.single.allowedPerUnit, Math.round(4900 / 1.1 - 4900 * 0.108 - 2050 - 490 - 1470));
+  // v2: 4,900 ÷ 1.1 − 529 − (700 + 1,350) − 광고 15% 735 − 마진 25% 1,225 − 여유 3% 147 = −232 (v1 은 −85)
+  assert.equal(a.single.allowedPerUnit, Math.round(4900 / 1.1 - 4900 * 0.108 - 2050 - 735 - 1225 - 147));
   assert.equal(a.grade, "AVOID");
   assert.equal(e(9900).grade, "CAUTION");
-  assert.equal(e(9900).single.allowedPerUnit, 1821);
+  assert.equal(e(9900).single.allowedPerUnit, 1524); // v1 1,821
   assert.equal(e(19900).grade, "OK");
-  assert.equal(e(19900).single.allowedPerUnit, 5082);
+  assert.equal(e(19900).single.allowedPerUnit, 4485); // v1 5,082
 });
 
 test("[PHASE 23] 묶음 시나리오: 4,900원 × 3개 × 0.9 = 13,200원 → 개당 쓸 수 있는 원가가 단품보다 큼 · 할인 종료 뒤(2027-02-01) 기본 비용이면 더 나빠짐", () => {
@@ -123,8 +123,8 @@ test("[PHASE 23] 묶음 시나리오: 4,900원 × 3개 × 0.9 = 13,200원 → �
   assert.equal(x.bestBundle.units, 3);
   assert.equal(x.promoUntil, "2027-01-31");
   // 할인 종료 후: 입출고 1,650 + 배송 2,200
-  assert.equal(x.afterPromo.allowedPerUnit, Math.round(4900 / 1.1 - 4900 * 0.108 - 3850 - 490 - 1470));
-  assert.equal(ECON_ASSUMPTIONS.targetMargin, 0.3);
+  assert.equal(x.afterPromo.allowedPerUnit, Math.round(4900 / 1.1 - 4900 * 0.108 - 3850 - 735 - 1225 - 147));
+  assert.deepEqual([ECON_ASSUMPTIONS.targetMargin, ECON_ASSUMPTIONS.adRate, ECON_ASSUMPTIONS.buffer], [0.25, 0.15, 0.03]);
 });
 
 test("[PHASE 23] 키워드 거르기: 브랜드 · 월 10만 이상 한 단어는 일괄 등록에서 제외, 여러 단어 · 일반 키워드는 통과", () => {

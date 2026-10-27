@@ -330,11 +330,11 @@ test("PHASE 13 T1 검색량 없음 · 경쟁상품 연결 없음 → 수요 · �
   assert.equal(r.total, null);
   assert.deepEqual(r.missingFactors, ["demand", "salesVolume", "salesGrowth", "competition", "wingEntry", "conversion"]);
 });
-test("PHASE 13 T2 검색량 10,000 + 경쟁상품 A·B·C → 수요 60 · 경쟁 83.64 · WING 57.78 · 리뷰 장벽 42.5 (경쟁상품 우선)", () => {
+test("PHASE 13 T2 검색량 10,000 + 경쟁상품 A·B·C → 수요 60 · 경쟁 83.64 · WING 96.67 · 리뷰 장벽 42.5 (경쟁상품 우선)", () => {
   const s = scoresOf(calculateOpportunityScore(p13({ searchVolume: dp(10000) }, P13_COMPETITORS), config));
   assert.equal(s.demand, 60); // 5,000→50 · 20,000→80 구간
   assert.equal(s.competition, 83.64); // 판매가 10,500 ÷ 경쟁 중앙값 11,000 = 0.9545
-  assert.equal(s.wingEntry, 57.78); // 3개 중 WING 1 = 33.3%
+  assert.equal(s.wingEntry, 96.67); // v1.1: 3개 중 제3자 판매자(WING 1 + 로켓그로스 1) = 66.7% (v1 은 WING 만 세서 57.78)
   assert.equal(s.reviewBarrier, 42.5); // 경쟁 리뷰 중앙값 1,500 (키워드 평균 리뷰보다 우선)
   assert.equal(s.marketStability, 100);
   assert.equal(s.margin, 72.5);
@@ -493,6 +493,76 @@ test("PHASE 19 V1 결측 집계: 요소별 계산 · NULL · 출처 · 추정값
   assert.equal(empty.total, null);
 });
 
+// PHASE 25 시장 구조 (market-structure-v1) · 엔진 v1.1
+{
+  const { marketStructure, sellerKindOf, describeMarket, MARKET_RULES } = await import("../../src/lib/market/structure.ts");
+  const item = (rankPosition, reviewCount, seller, extra = {}) => ({ rankPosition, isAd: false, price: 10000 + rankPosition * 100, reviewCount, sellerType: null, deliveryType: seller, observed: true, ...extra });
+
+  test("[시장] 판매자 구분: 확인한 판매자 유형 → 배송 배지 → 배지 없음은 판매자배송(추정) · 미수집은 모름", () => {
+    assert.equal(sellerKindOf({ sellerType: "COUPANG_RETAIL", deliveryType: "ROCKET_GROWTH", observed: true }), "RETAIL");
+    assert.equal(sellerKindOf({ sellerType: null, deliveryType: "ROCKET", observed: true }), "RETAIL");
+    assert.equal(sellerKindOf({ sellerType: null, deliveryType: "ROCKET_GROWTH", observed: true }), "GROWTH");
+    assert.equal(sellerKindOf({ sellerType: "WING_SELLER", deliveryType: null, observed: true }), "SELLER");
+    assert.equal(sellerKindOf({ sellerType: null, deliveryType: null, observed: true }), "SELLER");
+    assert.equal(sellerKindOf({ sellerType: null, deliveryType: null, observed: false }), "UNKNOWN");
+  });
+
+  test("[시장] 자연 상위 10개만 · 중앙값 · 광고 비율 · 직매입/제3자 분리", () => {
+    const items = [
+      item(1, 12000, "ROCKET"), item(2, 50, "ROCKET_GROWTH"), item(3, 80, null), item(4, 300, "ROCKET_GROWTH"), item(5, 20, null),
+      item(6, 900, "ROCKET"), item(7, 40, "ROCKET_GROWTH"), item(8, 150, null), item(9, 60, "ROCKET_GROWTH"), item(10, 10, null),
+      item(11, 99999, "ROCKET"), // 상위 10 밖 — 제외
+      { ...item(1, 5, "ROCKET"), isAd: true }, { ...item(2, 5, "ROCKET"), isAd: true }, { ...item(3, 5, "ROCKET"), isAd: true },
+    ];
+    const m = marketStructure("2026-10-27", items);
+    assert.equal(m.organic, 11);
+    assert.equal(m.ads, 3);
+    assert.equal(m.adRatio, 0.2143);
+    assert.equal(m.topN, 10);
+    assert.equal(m.medianReviews, 70); // 10 20 40 50 60 80 150 300 900 12000 → (60+80)/2
+    assert.equal(m.lowReviewCount, 6);
+    assert.deepEqual(m.sellers, { RETAIL: 2, GROWTH: 4, SELLER: 4, UNKNOWN: 0 });
+    assert.equal(m.retailRatio, 0.2);
+    assert.equal(m.thirdPartyRatio, 0.8);
+    assert.deepEqual(m.risks, []);
+    assert.match(describeMarket(m), /직매입 20% · 제3자 판매자 80%/);
+  });
+
+  test("[시장] 판매자 유형을 아는 상품이 5개 미만이면 비율을 내지 않는다 · 위험 표시", () => {
+    const few = marketStructure("2026-10-27", [1, 2, 3, 4, 5, 6].map((r) => item(r, 5000, r <= 2 ? "ROCKET" : null, r <= 2 ? {} : { observed: false })));
+    assert.equal(few.sellerKnown, 2);
+    assert.equal(few.retailRatio, null);
+    assert.equal(few.thirdPartyRatio, null);
+    assert.deepEqual(few.risks.map((r) => r.type), ["REVIEW_WALL"]);
+    const retail = marketStructure("2026-10-27", [
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((r) => item(r, 10, "ROCKET")), item(9, 10, null), item(10, 10, null),
+      ...[1, 2, 3, 4, 5].map((r) => ({ ...item(r, 1, "ROCKET"), isAd: true })),
+    ]);
+    assert.deepEqual(retail.risks.map((r) => r.type), ["RETAIL_DOMINANT", "AD_HEAVY"]);
+    assert.equal(marketStructure("2026-10-27", [{ ...item(1, 1, null), isAd: true }]), null);
+    assert.equal(MARKET_RULES.top, 10);
+  });
+
+  test("[엔진 v1.1] 시장 구조가 있으면 WING · 리뷰 장벽은 시장 구조 우선, 경쟁 난이도에 직매입 비율 추가 · 위험은 주의 사유로", () => {
+    const market = marketStructure("2026-10-27", [
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map((r) => item(r, 10, "ROCKET")), item(9, 10, null), item(10, 10, null),
+      ...[1, 2, 3, 4, 5].map((r) => ({ ...item(r, 1, "ROCKET"), isAd: true })),
+    ]);
+    const base = p13({ searchVolume: dp(10000) }, P13_COMPETITORS);
+    const r = calculateOpportunityScore({ ...base, market }, config);
+    const s = scoresOf(r);
+    assert.equal(s.wingEntry, 40); // 제3자 2/10 = 20% → 40
+    assert.equal(s.reviewBarrier, 100); // 상위 10 리뷰 중앙값 10 (경쟁상품 1,500 보다 우선)
+    assert.equal(s.competition, 46.82); // (판매가 비율 83.64 + 직매입 80% → 10) ÷ 2
+    const comp = r.factors.find((f) => f.factor === "competition");
+    assert.match(comp.basis, /직매입 비율 80\.0%/);
+    assert.ok(r.reasons.some((x) => x.kind === "CAUTION" && x.message.includes("쿠팡과 직접 경쟁")));
+    assert.equal(r.engineVersion, "score-engine-v1.1");
+    // 시장 구조가 없으면 기존(v1.1 경쟁상품) 방식 그대로
+    assert.deepEqual(scoresOf(calculateOpportunityScore({ ...base, market: null }, config)), scoresOf(calculateOpportunityScore(base, config)));
+  });
+}
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {
@@ -505,3 +575,4 @@ for (const [name, fn] of tests) {
   }
 }
 console.log(`\nOpportunity Score ${passed}/${tests.length}`);
+

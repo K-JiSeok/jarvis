@@ -11,7 +11,10 @@ import { STAGE_LABELS, type StageResult } from "@/lib/discover/stage";
 import type { QueryView, SupplyLinkView } from "@/lib/repositories/sourcing";
 import { discoverStatus } from "@/lib/discover/summary";
 
+import type { JudgeResult } from "@/lib/judge/engine";
+
 import { ComplianceForm } from "./automation-forms";
+import { JudgeBlock } from "./judge-block";
 import { ComplianceBadge } from "./automation-panel";
 import { ReadinessList } from "./readiness-list";
 import { SourcingSection } from "./sourcing-section";
@@ -31,9 +34,11 @@ export function DiscoverProductCard({
   p,
   compliance = null,
   sourcing = { query: null, links: [], detail: null, stage: null, keywordId: null, allowedCost30: null },
+  judgment = null,
 }: {
   p: DiscoverProduct;
   compliance?: ComplianceView | null;
+  judgment?: JudgeResult | null;
   sourcing?: { query: QueryView | null; links: SupplyLinkView[]; detail?: DetailResult | null; stage?: (StageResult & { watchStatus: string | null }) | null; keywordId?: string | null; allowedCost30?: number | null };
 }) {
   const r = p.preview;
@@ -70,7 +75,7 @@ export function DiscoverProductCard({
             </div>
           )}
         </div>
-        <div className="text-right" data-testid="discover-verdict">
+        <div className="text-right" data-testid="discover-verdict" title="기존 점수 V1 (9개 요소)">
           {status === "FINAL" ? (
             <div className="flex items-center gap-2">
               <span className="text-2xl font-bold tabular-nums">{fmt(r.total!)}</span>
@@ -90,6 +95,8 @@ export function DiscoverProductCard({
           )}
         </div>
       </header>
+
+      {judgment && <JudgeBlock j={judgment} />}
 
       {/* 판매 가능성 사전 검토 (PHASE 17) — 점수와 별도, 법률 판단 · 쿠팡 승인 아님 */}
       <details className="rounded-md border px-3 py-2" data-testid="discover-compliance">

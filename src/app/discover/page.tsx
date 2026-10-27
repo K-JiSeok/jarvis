@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 import { productStage, stageCounts } from "@/lib/discover/stage";
 import { loadStageRows } from "@/lib/repositories/stage";
 import { DiscoverProductCard } from "@/components/discover/discover-product-card";
+import { judge, supplyMarginOf, type JudgeResult } from "@/lib/judge/engine";
 import { ReadinessList } from "@/components/discover/readiness-list";
 import { NAVER_PROXY_NOTE } from "@/components/keywords/naver-volume-form";
 import { Badge } from "@/components/ui/badge";
@@ -91,9 +92,36 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
     const d = details.get(id)?.result;
     return { id, name: nameOf.get(id) ?? id.slice(0, 8), stage: s.stage, blocker: s.blocker ?? (d && d.status !== "CONFIRMED" ? `확인 안 된 필수 비용 ${d.confirmed.blocking.length}개` : null), cost: d?.status ?? "NOT_ANALYZABLE" };
   });
+  // 판정 V2 (PHASE 26): 이 키워드의 시장 구조(Score 입력에 이미 있음) + 추정 판매 · 단위 경제성 + 상세 원가 + 판매 가능성
+  const judgments = new Map<string, JudgeResult>();
+  for (const p of sorted) {
+    const e = estimates.get(p.id);
+    judgments.set(
+      p.id,
+      judge({
+        asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date()),
+        keyword: analysis?.keyword.keyword ?? null,
+        searchVolume: analysis?.keyword.metrics.searchVolume ?? null,
+        searchGrowthRate: analysis?.keyword.metrics.searchGrowthRate ?? null,
+        market: p.input.market ?? null,
+        price: e?.price ?? null,
+        sales: e?.sales ?? null,
+        economics: e?.economics ?? null,
+        supplyMargin: supplyMarginOf(details.get(p.id)?.result),
+        conversionRate: p.input.product.metrics?.conversionRate?.value ?? null,
+        compliance: compliance.get(p.id)?.status ?? null,
+      }),
+    );
+  }
+  const vRank = { STRONG_BUY: 0, REVIEW: 1, EXCLUDE: 3 } as const;
+  const byJudge = [...sorted].sort((a, b) => {
+    const ja = judgments.get(a.id)!;
+    const jb = judgments.get(b.id)!;
+    return (ja.verdict ? vRank[ja.verdict] : 2) - (jb.verdict ? vRank[jb.verdict] : 2) || (jb.total ?? -1) - (ja.total ?? -1);
+  });
   // 판매 불가(사용자 확인) 상품은 일반 후보에서 빼고 아래에 사유와 함께 따로 둔다 (기록 유지)
-  const excluded = sorted.filter((p) => compliance.get(p.id)?.status === "BLOCKED");
-  const products = sorted.filter((p) => compliance.get(p.id)?.status !== "BLOCKED");
+  const excluded = byJudge.filter((p) => compliance.get(p.id)?.status === "BLOCKED");
+  const products = byJudge.filter((p) => compliance.get(p.id)?.status !== "BLOCKED");
   const complianceCounts: Record<string, number> = {};
   for (const c of compliance.values()) complianceCounts[c.status] = (complianceCounts[c.status] ?? 0) + 1;
   const counts = { FINAL: 0, PROVISIONAL: 0, INSUFFICIENT: 0 };
@@ -270,7 +298,7 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
           <Card>
             <CardHeader>
               <CardTitle>3. 판매 후보 ({products.length})</CardTitle>
-              <CardDescription>최종 판정(총점 순) → 잠정 분석(계산된 요소 수 · 확보 점수 순) → 분석 불가. 잠정 분석끼리의 순서는 추천 순위가 아닙니다.</CardDescription>
+              <CardDescription>판정 V2 순서: 강력추천 → 검토 → 판정 보류 → 제외 (같은 판정은 총점 순). 강력추천은 실제 공급 원가를 확인한 상품에만 나옵니다. 오른쪽 위 점수는 기존 V1(9개 요소)입니다.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {products.length === 0 ? (
@@ -278,13 +306,13 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
                   이 키워드와 연결된 등록 상품이 없습니다. 쿠팡에서 이 키워드를 검색한 뒤 확장 프로그램 패널에서 후보 상품을 골라 등록하세요.
                 </p>
               ) : (
-                products.map((p) => <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} sourcing={sourcingOf(p.id)} />)
+                products.map((p) => <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} sourcing={sourcingOf(p.id)} judgment={judgments.get(p.id) ?? null} />)
               )}
               {excluded.length > 0 && (
                 <div className="space-y-2" data-testid="discover-excluded">
                   <h3 className="text-sm font-semibold">판매 불가로 제외된 상품 ({excluded.length}) — 사용자 확인</h3>
                   {excluded.map((p) => (
-                    <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} sourcing={sourcingOf(p.id)} />
+                    <DiscoverProductCard key={p.id} p={p} compliance={compliance.get(p.id) ?? null} sourcing={sourcingOf(p.id)} judgment={judgments.get(p.id) ?? null} />
                   ))}
                 </div>
               )}

@@ -17,6 +17,7 @@ import type { SavedScoreView, ScoreKeywordOption, ProductRiskView } from "@/type
 
 import { getCompetitorsForProduct } from "./competitors";
 import { getKeywordDetail } from "./keywords";
+import { getMarketStructure } from "./market";
 import { getProductDetail, kstToday } from "./products";
 import { listScenariosForProduct } from "./profit";
 import { diffWithCodeWeights } from "./scoring";
@@ -116,11 +117,12 @@ export async function listScoreKeywordOptions(productId: string): Promise<ScoreK
 
 /** 상품 + (선택) 키워드 맥락으로 점수 입력을 모은다. 상품이 없으면 null */
 export async function buildScoreInput(productId: string, keywordId: string | null): Promise<ScoreInput | null> {
-  const [product, keyword, competitors, scenarios] = await Promise.all([
+  const [product, keyword, competitors, scenarios, market] = await Promise.all([
     getProductDetail(productId),
     keywordId ? getKeywordDetail(keywordId) : null,
     getCompetitorsForProduct(productId),
     listScenariosForProduct(productId),
+    keywordId ? getMarketStructure(keywordId) : null,
   ]);
   if (!product) return null;
   // 고른 키워드가 보이지 않으면(삭제·다른 사용자) 키워드 없이 계산하지 않고 오류로 끝낸다
@@ -143,6 +145,7 @@ export async function buildScoreInput(productId: string, keywordId: string | nul
           },
         }
       : null,
+    market,
     competitors: competitors.map((c) => ({
       productId: c.competitor.id,
       productName: c.competitor.productName,
@@ -178,6 +181,20 @@ function inputRefs(input: ScoreInput, result: ScoreResult): Json {
     as_of: input.asOf,
     keyword_id: input.keyword?.id ?? null,
     keyword: input.keyword?.keyword ?? null,
+    // v1.1: 시장 구조는 저장 시점 값을 그대로 남긴다 (나중에 다시 계산하면 수집일이 바뀔 수 있음)
+    market: input.market
+      ? {
+          version: input.market.version,
+          captured_on: input.market.capturedOn,
+          top_n: input.market.topN,
+          median_reviews: input.market.medianReviews,
+          low_review_count: input.market.lowReviewCount,
+          retail_ratio: input.market.retailRatio,
+          third_party_ratio: input.market.thirdPartyRatio,
+          ad_ratio: input.market.adRatio,
+          sellers: input.market.sellers,
+        }
+      : null,
     profit_scenario_id: input.margin?.scenarioId ?? null,
     profit_calculation_id: input.margin?.calculationId ?? null,
     competitors: input.competitors.filter((c) => c.isActive).map((c) => ({ product_id: c.productId, relation_type: c.relationType })),

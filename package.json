@@ -21,6 +21,7 @@
     "test:extension": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/extension/test.mjs",
     "test:costs": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/costs/test.mjs",
     "test:estimate": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/estimate/test.mjs",
+    "test:judge": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/judge/test.mjs",
     "picks:candidates": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/picks/candidates.mjs",
     "picks:save": "node --import ./scripts/lib/ts-resolve.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/picks/save.mjs"
   },

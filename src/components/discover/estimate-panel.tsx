@@ -30,7 +30,7 @@ export function EstimatePanel({ rows, coupangIdOf }: { rows: EstimateView[]; cou
         <CardDescription>
           쿠팡은 판매량을 공개하지 않아 리뷰로 추정합니다: ① 상품 페이지의 &quot;한 달간 N명 이상 구매&quot; ② 리뷰 [최신순] 최근 날짜 간격 ③ 누적 리뷰 증가. {REVIEW_RATE.basis}. 추정 월 매출 순이며 Score V1 판정과 별개입니다.
           <br />
-          쓸 수 있는 원가 = 판매가 ÷ 1.1 − 쿠팡 수수료 − 로켓그로스 입출고 · 배송(극소형 가정) − 광고 {ECON_ASSUMPTIONS.adRate * 100}% − 목표 마진 {ECON_ASSUMPTIONS.targetMargin * 100}% (가정). 이 금액 안에 상품 매입가 · 운송 · 관세 · 포장이 모두 들어가야 합니다. 1,500원 미만이면 단품 판매 비추천.
+          쓸 수 있는 원가 = 판매가 ÷ 1.1 − 쿠팡 수수료 − 로켓그로스 입출고 · 배송(극소형 가정) − 광고 {ECON_ASSUMPTIONS.adRate * 100}% − 목표 마진 {ECON_ASSUMPTIONS.targetMargin * 100}% − 빠진 비용 여유 {ECON_ASSUMPTIONS.buffer * 100}% (가정, 설정 화면 참고). 이 금액 안에 상품 매입가 · 운송 · 관세 · 포장이 모두 들어가야 합니다. 1,500원 미만이면 단품 판매 비추천.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

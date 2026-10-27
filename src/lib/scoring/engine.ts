@@ -1,5 +1,12 @@
 /**
- * Opportunity Score 엔진 (score-engine-v1). 순수 함수 — DB 와 무관하다.
+ * Opportunity Score 엔진 (score-engine-v1.1). 순수 함수 — DB 와 무관하다.
+ *
+ * v1.1 (PHASE 25): 시장 구조(market-structure-v1)를 입력으로 받는다.
+ *   - WING 진입: 로켓그로스 판매자도 제3자 판매자로 센다 (v1 은 판매자배송만 세서 그로스가 많은 시장을 0점 처리했다).
+ *     우선순위: 시장 구조 제3자 판매자 비율 → 키워드 WING 비율 → 경쟁상품 판매자 유형.
+ *   - 리뷰 장벽: 시장 구조의 자연 상위 10개 리뷰 중앙값을 먼저 쓴다 (평균은 이상치에 끌려감).
+ *   - 경쟁 난이도: 쿠팡 직매입 비율을 지표 하나로 더한다 (직매입이 많을수록 어려움).
+ *   가중치 · 판정 기준 · 나머지 요소는 v1 과 같다.
  * 다른 모듈은 타입만 import 한다 (Node 테스트 스크립트에서 직접 실행).
  *
  * - 가중치·판정 기준은 scoring_versions(v1) 값을 주입받는다. 엔진이 바꾸지 않는다.
@@ -10,9 +17,10 @@
  */
 
 import type { ScoreFactor } from "@/config/scoring-weights";
+import type { MarketStructure } from "@/lib/market/structure";
 import type { Confidence, DataPoint, ScoreReason, SourceType, Verdict } from "@/types/common";
 
-export const SCORE_ENGINE_VERSION = "score-engine-v1";
+export const SCORE_ENGINE_VERSION = "score-engine-v1.1";
 
 // 입력 --------------------------------------------------------------------------------
 
@@ -60,6 +68,8 @@ export interface ScoreInput {
   /** 점수 맥락 키워드 (없으면 키워드 기반 요소는 미계산) */
   keyword: { id: string; keyword: string; metrics: ScoreKeywordMetrics | null } | null;
   competitors: ScoreCompetitor[];
+  /** 점수 맥락 키워드의 최근 검색 결과 시장 구조 (v1.1, 없으면 기존 방식) */
+  market?: MarketStructure | null;
   /** 같은 종류끼리만 비교한다 (월 환산 판매량) */
   salesHistory: { actual: HistoryPoint[]; estimated: HistoryPoint[] };
   priceHistory: HistoryPoint[];
@@ -131,7 +141,7 @@ export interface ScoreResult {
   reasons: ScoreReason[];
 }
 
-// 정규화 구간 (score-engine-v1) ------------------------------------------------------------
+// 정규화 구간 (score-engine-v1.1) ------------------------------------------------------------
 // [x, y] 점을 잇는 구간 선형. 구간 밖은 끝 값으로 고정.
 
 export const RULES = {
@@ -152,7 +162,9 @@ export const RULES = {
   brandConcentration: [[0.1, 100], [0.3, 60], [0.6, 0]],
   /** 내 판매가 ÷ 경쟁상품 가격 중앙값 → 경쟁 */
   priceRatio: [[0.9, 100], [1, 70], [1.2, 30], [1.5, 0]],
-  /** 상위권 WING 판매자 비율 → WING 진입 */
+  /** 쿠팡 직매입 비율 → 경쟁 (v1.1) */
+  retailRatio: [[0.2, 100], [0.5, 60], [0.8, 10], [1, 0]],
+  /** 상위권 WING(제3자) 판매자 비율 → WING 진입 */
   wingRatio: [[0, 0], [0.2, 40], [0.5, 80], [0.7, 100]],
   /** 경쟁상품 판매자 유형으로 WING 비율을 셀 때 최소 표본 */
   wingMinSample: 3,
@@ -325,6 +337,12 @@ function scoreCompetition(i: ScoreInput): Partial9 {
   }
   inputs.push(ref("브랜드 집중도", km?.brandConcentration));
 
+  const mk = i.market;
+  if (mk?.retailRatio != null) {
+    subs.push({ score: interpolate(mk.retailRatio, RULES.retailRatio), text: `직매입 비율 ${pct(mk.retailRatio)} (자연 상위 ${mk.topN}개, ${mk.capturedOn})` });
+    inputs.push({ name: "쿠팡 직매입 비율", value: mk.retailRatio, source: "CALCULATED", capturedOn: mk.capturedOn });
+  }
+
   const prices = activeCompetitors(i)
     .map((c) => c.metrics?.price)
     .filter((p): p is DataPoint => p?.value != null);
@@ -336,7 +354,7 @@ function scoreCompetition(i: ScoreInput): Partial9 {
     inputs.push({ name: mine.label, value: mine.value }, { name: "경쟁상품 가격 중앙값", value: medPrice });
   }
   if (subs.length === 0) {
-    return missing("키워드 상품수/검색량 · 브랜드 집중도 · 경쟁상품 가격이 모두 없음", ["키워드 경쟁 지표 또는 경쟁상품 가격"], inputs);
+    return missing("키워드 상품수/검색량 · 브랜드 집중도 · 직매입 비율 · 경쟁상품 가격이 모두 없음", ["키워드 경쟁 지표 · 검색 결과 수집 또는 경쟁상품 가격"], inputs);
   }
   return {
     score: subs.reduce((s, x) => s + x.score, 0) / subs.length,
@@ -346,7 +364,18 @@ function scoreCompetition(i: ScoreInput): Partial9 {
   };
 }
 
+const THIRD_PARTY = new Set(["WING_SELLER", "ROCKET_GROWTH_SELLER"]);
+
 function scoreWing(i: ScoreInput): Partial9 {
+  const mk = i.market;
+  if (mk?.thirdPartyRatio != null) {
+    return {
+      score: interpolate(mk.thirdPartyRatio, RULES.wingRatio),
+      basis: `자연 상위 ${mk.topN}개 중 제3자 판매자(로켓그로스 ${mk.sellers.GROWTH} · 판매자배송 ${mk.sellers.SELLER}) ${pct(mk.thirdPartyRatio)} · 직매입 ${mk.sellers.RETAIL}개 (${mk.capturedOn})`,
+      inputs: [{ name: "제3자 판매자 비율 (시장 구조)", value: mk.thirdPartyRatio, source: "CALCULATED", capturedOn: mk.capturedOn }],
+      missing: [],
+    };
+  }
   const w = i.keyword?.metrics?.wingRatio;
   if (w?.value != null) {
     return { score: interpolate(w.value, RULES.wingRatio), basis: `"${i.keyword!.keyword}" 상위권 WING 비율 ${pct(w.value)}`, inputs: [ref("WING 비율", w)], missing: [] };
@@ -355,21 +384,30 @@ function scoreWing(i: ScoreInput): Partial9 {
     .map((c) => ({ c, t: c.metrics?.sellerTypeObserved }))
     .filter((x) => x.t?.value && x.t.value !== "UNKNOWN");
   if (known.length >= RULES.wingMinSample) {
-    const ratio = known.filter((x) => x.t!.value === "WING_SELLER").length / known.length;
+    const ratio = known.filter((x) => THIRD_PARTY.has(String(x.t!.value))).length / known.length;
     return {
       score: interpolate(ratio, RULES.wingRatio),
-      basis: `활성 경쟁상품 ${known.length}개 중 WING 판매자 ${pct(ratio)} (키워드 WING 비율 없음)`,
+      basis: `활성 경쟁상품 ${known.length}개 중 제3자 판매자(로켓그로스 · 판매자배송) ${pct(ratio)} (검색 결과 시장 구조 · 키워드 WING 비율 없음)`,
       inputs: known.map((x) => ref(`판매자 유형: ${x.c.productName}`, x.t)),
       missing: [],
     };
   }
   return missing(
-    `키워드 WING 비율 없음, 판매자 유형을 아는 활성 경쟁상품 ${known.length}개 (최소 ${RULES.wingMinSample}개)`,
-    ["키워드 WING 비율 또는 경쟁상품 판매자 유형"],
+    `검색 결과 시장 구조 · 키워드 WING 비율 없음, 판매자 유형을 아는 활성 경쟁상품 ${known.length}개 (최소 ${RULES.wingMinSample}개)`,
+    ["검색 결과 수집(판매자 구성) 또는 키워드 WING 비율 또는 경쟁상품 판매자 유형"],
   );
 }
 
 function scoreReviewBarrier(i: ScoreInput): Partial9 {
+  const mk = i.market;
+  if (mk?.medianReviews != null) {
+    return {
+      score: interpolate(mk.medianReviews, RULES.reviewCount),
+      basis: `자연 상위 ${mk.topN}개 리뷰 중앙값 ${n0(mk.medianReviews)}개 · 리뷰 100개 미만 ${mk.lowReviewCount}/${mk.reviewKnown}개 (${mk.capturedOn})`,
+      inputs: [{ name: "자연 상위 리뷰 중앙값 (시장 구조)", value: mk.medianReviews, source: "CALCULATED", capturedOn: mk.capturedOn }],
+      missing: [],
+    };
+  }
   const reviews = activeCompetitors(i)
     .map((c) => ({ c, p: c.metrics?.reviewCount }))
     .filter((x) => x.p?.value != null);
@@ -386,7 +424,7 @@ function scoreReviewBarrier(i: ScoreInput): Partial9 {
   if (avg?.value != null) {
     return { score: interpolate(avg.value, RULES.reviewCount), basis: `"${i.keyword!.keyword}" 상위 상품 평균 리뷰 ${n0(avg.value)}개 (경쟁상품 리뷰 없음)`, inputs: [ref("평균 리뷰", avg)], missing: [] };
   }
-  return missing("활성 경쟁상품 리뷰 수 · 키워드 평균 리뷰가 모두 없음", ["경쟁상품 리뷰 수 또는 키워드 평균 리뷰"]);
+  return missing("검색 결과 시장 구조 · 활성 경쟁상품 리뷰 수 · 키워드 평균 리뷰가 모두 없음", ["검색 결과 수집 또는 경쟁상품 리뷰 수 또는 키워드 평균 리뷰"]);
 }
 
 function scoreConversion(i: ScoreInput): Partial9 {
@@ -496,6 +534,7 @@ export function calculateOpportunityScore(input: ScoreInput, config: ScoringConf
   if (dateRange && dateRange.days > 30) {
     reasons.push({ kind: "CAUTION", message: `사용한 데이터의 수집일 차이가 ${dateRange.days}일입니다 (${dateRange.from} ~ ${dateRange.to})` });
   }
+  for (const r of input.market?.risks ?? []) reasons.push({ kind: "CAUTION", message: `시장 위험: ${r.message}` });
   if (dataConfidence === "C") reasons.push({ kind: "CAUTION", message: "참고용 추정(C) 데이터가 포함되어 있습니다" });
 
   return {

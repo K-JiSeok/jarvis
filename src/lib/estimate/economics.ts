@@ -5,7 +5,7 @@
  *   그래서 판매가가 낮을수록 쿠팡 비용 비중이 급격히 커진다 (4,900원 → 남는 돈 38% · 19,900원 → 66%).
  *
  * 계산 (일반과세자 · VAT 별도 기준, 크기 극소형 가정 — 더 크면 더 나쁨)
- *   쓸 수 있는 도착 원가 = 판매가 ÷ 1.1 − 판매 수수료 − 입출고 · 배송비 − 광고비(판매가 × 가정 비율) − 목표 이익(판매가 × 목표 마진)
+ *   쓸 수 있는 도착 원가 = 판매가 ÷ 1.1 − 판매 수수료 − 입출고 · 배송비 − 광고비(판매가 × 가정 비율) − 목표 이익(판매가 × 목표 마진) − 빠진 비용 여유(판매가 × 3%)
  *   도착 원가 = 상품 매입가 + 중국 내 · 국제 운송 + 관세 + 통관 + 포장 · 라벨 (보관 · 반품은 빠짐 → 실제는 더 빠듯)
  *
  * 등급 (쓸 수 있는 도착 원가 기준 — 중국 소형 잡화의 운송 포함 도착 원가가 보통 개당 수천 원이라는 점을 반영한 기준)
@@ -15,10 +15,19 @@
  * 이 기준값 · 광고 비율 · 목표 마진은 가정이다 (화면에 표시, 상품 판단은 사용자).
  */
 
+import { JUDGE_ASSUMPTIONS } from "../../config/judge-assumptions";
 import { bandCell, pickCard, salesFeeRate, type RateCard } from "../costs/rate-cards";
 
-export const UNIT_ECON_VERSION = "unit-econ-v1";
-export const ECON_ASSUMPTIONS = { targetMargin: 0.3, adRate: 0.1, avoidBelow: 1500, cautionBelow: 4000, bundleDiscount: 0.9 };
+export const UNIT_ECON_VERSION = "unit-econ-v2";
+/** v2 (PHASE 26): 광고 10% → 15%, 목표 마진 30% → 25%, 빠진 비용 여유분 3% 추가 — config/judge-assumptions.ts 와 같은 값 */
+export const ECON_ASSUMPTIONS = {
+  targetMargin: JUDGE_ASSUMPTIONS.targetNetMargin.value,
+  adRate: JUDGE_ASSUMPTIONS.adRate.value,
+  buffer: JUDGE_ASSUMPTIONS.otherCostBuffer.value,
+  avoidBelow: 1500,
+  cautionBelow: 4000,
+  bundleDiscount: 0.9,
+};
 
 export type EconGrade = "OK" | "CAUTION" | "AVOID";
 export const ECON_LABELS: Record<EconGrade, string> = { OK: "가격 구조 적정", CAUTION: "원가 매우 저렴해야 함", AVOID: "단품 판매 비추천 (저가)" };
@@ -80,7 +89,7 @@ export function unitEconomics(i: EconInput): UnitEconomics | null {
     const rg = rgAt(p, onDate);
     if (rg == null) return null;
     const left = p / 1.1 - p * feeRate - rg;
-    const allowed = left - p * ECON_ASSUMPTIONS.adRate - p * ECON_ASSUMPTIONS.targetMargin;
+    const allowed = left - p * ECON_ASSUMPTIONS.adRate - p * ECON_ASSUMPTIONS.targetMargin - p * ECON_ASSUMPTIONS.buffer;
     const perUnit = Math.round(allowed / units);
     return { units, price: p, left: Math.round(left), allowedPerUnit: perUnit, grade: gradeOf(perUnit) };
   };
@@ -104,6 +113,6 @@ export function unitEconomics(i: EconInput): UnitEconomics | null {
     afterPromo,
     promoUntil,
     bestBundle,
-    basis: `판매가 ÷ 1.1 − 수수료 ${(feeRate * 100).toFixed(1)}% − 로켓그로스 입출고 · 배송(극소형${i.feeGroup ? "" : " · 분류 미확정이라 요율표 중 높은 값"}) − 광고 ${ECON_ASSUMPTIONS.adRate * 100}% − 목표 마진 ${ECON_ASSUMPTIONS.targetMargin * 100}% (가정). 묶음가 = 단품가 × 개수 × ${ECON_ASSUMPTIONS.bundleDiscount}`,
+    basis: `판매가 ÷ 1.1 − 수수료 ${(feeRate * 100).toFixed(1)}% − 로켓그로스 입출고 · 배송(극소형${i.feeGroup ? "" : " · 분류 미확정이라 요율표 중 높은 값"}) − 광고 ${ECON_ASSUMPTIONS.adRate * 100}% − 목표 마진 ${ECON_ASSUMPTIONS.targetMargin * 100}% − 빠진 비용 여유 ${ECON_ASSUMPTIONS.buffer * 100}% (가정). 묶음가 = 단품가 × 개수 × ${ECON_ASSUMPTIONS.bundleDiscount}`,
   };
 }
