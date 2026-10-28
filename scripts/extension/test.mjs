@@ -79,12 +79,60 @@ test("Extension", "도매 사이트 스크립트는 화면만 읽고 직접 요�
   for (const bad of ["fetch(", "XMLHttpRequest", "tabs.create", "location.href =", "location.assign", ".click()"]) assert.ok(!js.includes(bad), bad);
   assert.ok(js.includes("jarvis:supply") && js.includes("jarvis:set-target"));
 });
-test("Extension", "예약 자동 발굴은 JARVIS 서버만 부른다 (쿠팡 탭 열기 · 쿠팡 요청 없음)", () => {
+test("Extension", "배경: 예약 자동 발굴은 JARVIS 서버만 · 쿠팡 탭은 검색 결과 자동 수집(PHASE 27)에서 검색 1페이지만 연다", () => {
   const bg = readFileSync(join(root, "extension", "dist", "background.js"), "utf8");
   assert.ok(bg.includes("/api/automation/run"), "자동 실행 경로");
   assert.ok(bg.includes("jarvis-auto-discovery"), "알람 이름");
-  for (const bad of ["tabs.create", "tabs.update", "windows.create", "coupang.com"]) assert.ok(!bg.includes(bad), bad);
+  assert.ok(bg.includes("jarvis-auto-collect-step") && bg.includes("/api/extension/keywords"), "자동 수집 알람 · 키워드 목록");
+  // 탭을 바꾸거나 창을 만들지 않는다. 탭을 여는 곳은 한 군데
+  for (const bad of ["tabs.update", "windows.create", "scripting", "/vp/products"]) assert.ok(!bg.includes(bad), bad);
+  assert.equal(bg.split("tabs.create(").length - 1, 1, "tabs.create 는 한 곳");
+  // 쿠팡 주소는 검색 결과(/np/search) 하나뿐이고, 배경에서 쿠팡에 직접 요청하지 않는다
+  const coupang = [...bg.matchAll(/coupang\.com[^"'`]*/g)].map((m) => m[0]);
+  assert.ok(coupang.length >= 1);
+  for (const c of coupang) assert.ok(c === "coupang.com" || c.startsWith("coupang.com/np/search"), c);
+  assert.ok(!/fetch\([^)]*coupang/.test(bg), "쿠팡 fetch");
 });
+
+{
+  const { AUTO_COLLECT_RULES: R, isDue, pickKeywords, nextDelayMinutes, searchUrl, isAllowedAutoUrl, kst, summarize } = await import("../../extension/src/shared/auto-collect.ts");
+  const at = (iso) => Date.parse(iso);
+  test("Extension", "자동 수집 규칙: 주 1회 · 9시(KST) 이후 · 실행 중 아님 · 끄면 안 돎", () => {
+    assert.equal(kst(at("2026-10-28T00:30:00Z")).hour, 9);
+    assert.equal(isDue(at("2026-10-27T23:59:00Z"), { enabled: true, running: false, lastFinishedAt: null }), false, "08:59 KST");
+    assert.equal(isDue(at("2026-10-28T00:00:00Z"), { enabled: true, running: false, lastFinishedAt: null }), true, "09:00 KST 첫 실행");
+    assert.equal(isDue(at("2026-10-28T03:00:00Z"), { enabled: false, running: false, lastFinishedAt: null }), false, "꺼짐");
+    assert.equal(isDue(at("2026-10-28T03:00:00Z"), { enabled: true, running: true, lastFinishedAt: null }), false, "실행 중");
+    assert.equal(isDue(at("2026-11-03T03:00:00Z"), { enabled: true, running: false, lastFinishedAt: "2026-10-28T01:00:00Z" }), false, "6일");
+    assert.equal(isDue(at("2026-11-04T03:00:00Z"), { enabled: true, running: false, lastFinishedAt: "2026-10-28T01:00:00Z" }), true, "7일");
+    assert.equal(R.intervalDays, 7);
+  });
+  test("Extension", "자동 수집 대상: 최근 6일 안 수집은 제외 · 오래된 것부터 · 중복 제거 · 최대 20개", () => {
+    const now = at("2026-10-28T03:00:00Z");
+    const list = [
+      { keyword: "케이크토퍼", lastCollectedOn: "2026-10-28" },
+      { keyword: "보온병", lastCollectedOn: "2026-10-13" },
+      { keyword: "젓가락", lastCollectedOn: "2026-10-22" },
+      { keyword: "신규", lastCollectedOn: null },
+      { keyword: " 보온병 ", lastCollectedOn: "2026-10-13" },
+      { keyword: "", lastCollectedOn: null },
+    ];
+    assert.deepEqual(pickKeywords(list, now), ["신규", "보온병", "젓가락"]);
+    const many = Array.from({ length: 30 }, (_, i) => ({ keyword: `k${i}`, lastCollectedOn: null }));
+    assert.equal(pickKeywords(many, now).length, R.maxKeywords);
+  });
+  test("Extension", "자동 수집 간격 30초~2분 · 여는 주소는 검색 결과 1페이지뿐", () => {
+    assert.equal(nextDelayMinutes(0), 0.5);
+    assert.equal(nextDelayMinutes(1), 2);
+    assert.equal(nextDelayMinutes(5), 2);
+    const u = searchUrl(" 차량용 청소기 ");
+    assert.equal(u, "https://www.coupang.com/np/search?q=%EC%B0%A8%EB%9F%89%EC%9A%A9%20%EC%B2%AD%EC%86%8C%EA%B8%B0&page=1");
+    assert.ok(isAllowedAutoUrl(u));
+    for (const bad of ["https://www.coupang.com/vp/products/1", "https://www.coupang.com/np/search?q=a&page=2", "https://www.coupang.com/np/search", "https://evil.com/np/search?q=a", "not a url"]) assert.equal(isAllowedAutoUrl(bad), false, bad);
+    const sum = summarize({ startedAt: "a", trigger: "MANUAL", queue: [], results: [{ keyword: "x", ok: true, message: "", at: "" }, { keyword: "y", ok: false, message: "", at: "" }] }, "b");
+    assert.deepEqual([sum.total, sum.ok, sum.failed], [2, 1, 1]);
+  });
+}
 test("Extension", "빌드 결과물에 service role 키 없음 · 공개 키만", () => {
   const dist = join(root, "extension", "dist");
   if (!existsSync(dist)) throw new Error("extension/dist 없음 — npm run ext:build 먼저");

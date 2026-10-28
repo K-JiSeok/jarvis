@@ -1,5 +1,6 @@
 /** 팝업: 로그인 · 현재 페이지 상태 · [현재 페이지 수집] · 마지막 결과 */
 
+import type { AutoSummary } from "../shared/auto-collect";
 import { PAGE_LABELS, type DetectResponse, type LastAuto, type LastRun, type Message } from "../shared/types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -82,7 +83,14 @@ function renderLast(run: LastRun | null) {
 }
 
 async function refresh() {
-  const status = await send<{ loggedIn: boolean; email: string | null; apiBase: string; lastRun: LastRun | null; lastAuto: LastAuto | null }>({ type: "jarvis:status" });
+  const status = await send<{
+    loggedIn: boolean;
+    email: string | null;
+    apiBase: string;
+    lastRun: LastRun | null;
+    lastAuto: LastAuto | null;
+    autoCollect: { enabled: boolean; running: { done: number; remaining: number } | null; summary: AutoSummary | null };
+  }>({ type: "jarvis:status" });
   apiBase = status.apiBase;
   const conn = $("conn");
   conn.textContent = status.loggedIn ? "● 연결됨" : "● 로그인 필요";
@@ -93,6 +101,7 @@ async function refresh() {
   if (!status.loggedIn) return;
 
   renderLast(status.lastRun);
+  renderAutoCollect(status.autoCollect);
   if (status.lastAuto) {
     const a = status.lastAuto;
     $("auto").textContent = `${new Date(a.at).toLocaleString("ko-KR")} · ${a.status} · ${a.message}`;
@@ -133,6 +142,41 @@ $("collect").addEventListener("click", async () => {
   if (run.result.ok) setState("done");
   else setState("error", run.result.error);
   button.disabled = false;
+});
+
+/** 검색 결과 자동 수집 (PHASE 27) */
+function renderAutoCollect(a: { enabled: boolean; running: { done: number; remaining: number } | null; summary: AutoSummary | null }) {
+  $<HTMLInputElement>("auto-enabled").checked = a.enabled;
+  $<HTMLButtonElement>("auto-start").disabled = !!a.running;
+  const box = $("collect-status");
+  const ul = $("collect-results");
+  if (a.running) {
+    box.textContent = `실행 중 · 완료 ${a.running.done} · 남음 ${a.running.remaining} (뒤쪽 탭이 잠깐 열렸다 닫힙니다)`;
+    box.className = "";
+  } else if (a.summary) {
+    const s = a.summary;
+    box.textContent = `${new Date(s.finishedAt).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })} · ${s.trigger === "MANUAL" ? "수동" : "예약"} · 키워드 ${s.total}개 중 성공 ${s.ok}${s.failed ? ` · 실패 ${s.failed}` : ""}`;
+    box.className = s.failed ? "error" : "muted";
+  } else {
+    box.textContent = a.enabled ? "아직 실행 기록이 없습니다. (1시간마다 확인 · 주 1회 실행)" : "꺼져 있습니다.";
+    box.className = "muted";
+  }
+  const results = a.summary?.results ?? [];
+  ul.replaceChildren(...results.slice(0, 20).map((r) => Object.assign(document.createElement("li"), { textContent: `${r.ok ? "✓" : "✗"} ${r.keyword} — ${r.message}` })));
+}
+
+$("auto-enabled").addEventListener("change", async (e) => {
+  await send({ type: "jarvis:auto-enable", enabled: (e.target as HTMLInputElement).checked });
+  await refresh();
+});
+
+$("auto-start").addEventListener("click", async () => {
+  const button = $<HTMLButtonElement>("auto-start");
+  button.disabled = true;
+  const r = await send<{ ok: boolean; message: string }>({ type: "jarvis:auto-start" });
+  $("collect-status").textContent = r.message;
+  $("collect-status").className = r.ok ? "" : "error";
+  setTimeout(() => void refresh(), 1500);
 });
 
 $("login-form").addEventListener("submit", async (e) => {

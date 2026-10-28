@@ -7,6 +7,12 @@ import { readFileSync } from "node:fs";
 import { adminClient, kstToday, resolveOwner } from "./lib.mjs";
 
 const argv = process.argv.slice(2);
+// 2026-10-28 사용자 결정: 판정 엔진이 검증될 때까지 매일 추천 저장을 멈춘다 (src/config/picks.ts). 테스트 발굴은 picks:candidates 로.
+const { DAILY_PICKS } = await import("../../src/config/picks.ts");
+if (!DAILY_PICKS.enabled && !argv.includes("--force")) {
+  console.error(`매일 추천이 멈춰 있습니다 (${DAILY_PICKS.pausedOn}~): ${DAILY_PICKS.reason}. 저장하지 않았습니다. 정말 저장하려면 --force`);
+  process.exit(2);
+}
 const flagVal = new Set(["--owner", "--by", "--candidates"]);
 const file = argv.find((a, i) => !a.startsWith("--") && !flagVal.has(argv[i - 1]));
 if (!file) throw new Error("저장할 추천 JSON 파일 경로가 필요합니다");
@@ -36,7 +42,7 @@ if (cand) {
       rating: c.rating,
       keyword: c.keyword,
       candidatesAt: cand.generatedAt,
-      versions: "est-sales-v1 · unit-econ-v1",
+      versions: "est-sales-v1 · unit-econ-v2 · judge-v2",
     };
   }
 }

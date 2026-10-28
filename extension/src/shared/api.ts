@@ -8,6 +8,7 @@
 
 import { EXT_TOOL, EXT_VERSION, JARVIS_API_BASE, SUPABASE_ANON_KEY, SUPABASE_URL } from "./constants";
 import { getSession, setSession, type StoredSession } from "./storage";
+import type { TrackedKeyword } from "./auto-collect";
 import type { AutomationResult, IngestRecord, IngestResult, LookupResult, RegisterInput, RegisterResult } from "./types";
 
 interface TokenResponse {
@@ -78,7 +79,7 @@ export async function validSession(): Promise<StoredSession | null> {
 }
 
 /** 개발 빌드 전용 시험: 본문 문자열을 그대로 보낸다 (로그인 토큰 · 확장 프로그램 origin 은 실제와 같다) */
-const DEV_PATHS = ["/api/ingest", "/api/extension/lookup", "/api/extension/register"];
+const DEV_PATHS = ["/api/ingest", "/api/extension/lookup", "/api/extension/register", "/api/extension/keywords"];
 export async function sendRaw(body: string, path = "/api/ingest"): Promise<{ status: number; json: unknown }> {
   if (!DEV_PATHS.includes(path)) return { status: 0, json: { error: "허용되지 않은 경로" } };
   const session = await validSession();
@@ -141,4 +142,9 @@ export function registerSelected(input: RegisterInput): Promise<RegisterResult> 
     "/api/extension/register",
     JSON.stringify({ idempotencyKey: crypto.randomUUID(), tool: EXT_TOOL, version: EXT_VERSION, ...input }),
   );
+}
+
+/** 검색 결과 자동 수집 대상: 추적 중인 키워드 + 마지막 수집일 (/api/extension/keywords, PHASE 27, 읽기 전용) */
+export function trackedKeywords(): Promise<{ ok: boolean; error?: string; keywords?: TrackedKeyword[] }> {
+  return postApi<{ ok: boolean; error?: string; keywords?: TrackedKeyword[] }>("/api/extension/keywords", JSON.stringify({}));
 }

@@ -41,6 +41,7 @@ input { width: 100%; margin: 3px 0; padding: 7px 8px; border: 1px solid var(--li
 button { width: 100%; margin-top: 6px; padding: 8px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
 button.link { width: auto; margin: 0; padding: 0; background: none; color: var(--muted); font-weight: 400; text-decoration: underline; }
+button.secondary { background: #374151; }
 footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 td { padding: 1px 0; }

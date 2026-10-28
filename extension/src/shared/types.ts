@@ -138,7 +138,11 @@ export type Message =
   /** PHASE 18 도매 소싱: 검색 링크의 대상 상품 기억 · 조회 · 상품 페이지 저장 */
   | { type: "jarvis:set-target"; target: SupplyTarget }
   | { type: "jarvis:get-target" }
-  | { type: "jarvis:supply"; page: unknown; targetProductId: string | null };
+  | { type: "jarvis:supply"; page: unknown; targetProductId: string | null }
+  /** PHASE 27 검색 결과 자동 수집: 배경 → 자동 수집 탭(검색 결과)에 수집 요청 · 팝업 → 지금 실행 / 켜기 · 끄기 */
+  | { type: "jarvis:auto-search"; keyword: string }
+  | { type: "jarvis:auto-start" }
+  | { type: "jarvis:auto-enable"; enabled: boolean };
 
 /** 예약 자동 발굴 (chrome.alarms → /api/automation/run) 마지막 결과 — PHASE 17 */
 export interface LastAuto {

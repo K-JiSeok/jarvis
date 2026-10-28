@@ -336,4 +336,34 @@ function bind() {
   });
 }
 
+/**
+ * 검색 결과 자동 수집 (PHASE 27): 배경 서비스 워커가 연 자동 수집 탭에서만 온다.
+ * [현재 검색 결과 수집]과 같은 흐름(runSearch)을 실행한다. 상품 등록 · 다른 페이지 이동은 하지 않는다.
+ * 쿠팡이 목록을 늦게 그리므로 수집 가능해질 때까지 최대 25초 기다린다. 요청한 검색어와 화면의 검색어가 다르면 수집하지 않는다.
+ */
+chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || message.type !== "jarvis:auto-search") return false;
+  (async () => {
+    let d = collector.detect();
+    for (let i = 0; i < 25 && !d.collectable; i += 1) {
+      await new Promise((r) => setTimeout(r, 1000));
+      d = collector.detect();
+    }
+    if (!d.collectable) return { ok: false, message: d.reason ?? "수집할 수 없는 화면입니다." };
+    const { keyword } = searchParamsOf(location.href);
+    if ((keyword ?? "").trim() !== message.keyword.trim()) return { ok: false, message: `화면 검색어 "${keyword}"가 요청한 "${message.keyword}"와 다릅니다.` };
+    if (busy) return { ok: false, message: "이미 수집 중입니다." };
+    busy = true;
+    try {
+      const run = await runSearch();
+      return { ok: run.result.ok, message: resultLine(run) };
+    } catch (error) {
+      return { ok: false, message: `오류: ${(error as Error).message}` };
+    } finally {
+      busy = false;
+    }
+  })().then(sendResponse);
+  return true;
+});
+
 start(collector);

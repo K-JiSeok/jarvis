@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DAILY_PICKS } from "@/config/picks";
 import type { DailyPick } from "@/lib/repositories/picks";
 
 import { PickButtons } from "./picks-forms";
@@ -23,7 +24,14 @@ export function PicksPanel({ picks, today }: { picks: DailyPick[]; today: string
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {todays.length === 0 && <PicksMissingNotice today={today} lastDate={past[0]?.pickDate ?? null} />}
+        {!DAILY_PICKS.enabled ? (
+          <div role="status" data-testid="picks-paused" className="rounded-md border p-3 text-xs">
+            <p className="font-medium">매일 추천을 멈춰 두었습니다 ({DAILY_PICKS.pausedOn}부터).</p>
+            <p className="text-muted-foreground mt-1">{DAILY_PICKS.reason}. 그동안은 아래 &quot;판매 후보&quot;의 판정 V2로 테스트 발굴합니다. 지난 추천은 참고용으로만 남겨 둡니다.</p>
+          </div>
+        ) : (
+          todays.length === 0 && <PicksMissingNotice today={today} lastDate={past[0]?.pickDate ?? null} />
+        )}
         {latest.length === 0 ? (
           <p className="text-muted-foreground text-sm">아직 추천이 없습니다 — 첫 추천은 다음 오전 8시에 만들어집니다.</p>
         ) : (
