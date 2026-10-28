@@ -91,7 +91,9 @@ export default function SettingsPage() {
                     <td className="py-2 pr-4 text-right whitespace-nowrap tabular-nums">
                       {Array.isArray(a.value)
                         ? (a.value as readonly number[]).map((v) => `${v.toLocaleString("ko-KR")}원`).join(" ~ ")
-                        : typeof a.value === "number" && a.value < 1
+                        : "unit" in a
+                          ? `${String(a.value)}${a.unit}`
+                          : typeof a.value === "number" && a.value < 1
                           ? `${Math.round(a.value * 100)}%`
                           : `${String(a.value)}개`}
                     </td>

@@ -1,5 +1,8 @@
 /**
- * 판매 가능성 사전 검토 (순수 함수, PHASE 17 · compliance-rules-v1). V1 점수와 별도.
+ * 판매 가능성 사전 검토 (순수 함수, PHASE 17 · compliance-rules-v2). V1 점수와 별도.
+ *
+ * v2 (PHASE 28): 전기 · 배터리 단어 보강 (무선 · 청소기 · 가습기 · 랜턴 …), 전파법 적합성평가 규칙 추가.
+ *   10-28 실제 데이터에서 차량용청소기 30개 중 1개만 인증 필요로 잡힌 문제를 고쳤다.
  *
  * 법률 판단 · 쿠팡 판매 승인이 아니다. 상품명 · 카테고리 · 브랜드 정보로 "확인이 필요한 규정의 가능성"을 표시하는 사전 선별이다.
  *
@@ -12,7 +15,7 @@
  *   - 공급 가능성: 공급처 데이터 출처가 연결돼 있지 않으므로 항상 UNKNOWN (공급 가능으로 확정하지 않음).
  */
 
-export const COMPLIANCE_RULE_VERSION = "compliance-rules-v1";
+export const COMPLIANCE_RULE_VERSION = "compliance-rules-v2";
 
 export const COMPLIANCE_STATUSES = ["BLOCKED", "REQUIRES_CERTIFICATION", "REQUIRES_BRAND_PROOF", "MANUAL_REVIEW", "CLEARED", "UNKNOWN"] as const;
 export type ComplianceStatus = (typeof COMPLIANCE_STATUSES)[number];
@@ -59,6 +62,8 @@ export interface ComplianceInput {
 
 interface Rule {
   id: string;
+  /** 짧은 이름 (판정 위험 문구에 쓴다) */
+  label: string;
   area: ComplianceArea;
   status: ComplianceStatus;
   /** 상품명 · 카테고리(공백 제거)에서 찾는 단어 — 이것만으로 규칙 적용 */
@@ -77,6 +82,7 @@ const LAW = (name: string) => `${name} (국가법령정보센터 law.go.kr)`;
 export const RULES: Rule[] = [
   {
     id: "food-contact",
+    label: "식품용 기구 · 용기",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
     terms: ["얼음틀", "얼음트레이", "아이스트레이", "이유식", "밀폐용기", "소분용기", "반찬통", "도마", "식판", "텀블러", "물병", "접시", "그릇", "수저", "젓가락", "냄비", "프라이팬", "베이킹", "조리도구", "푸드블럭"],
@@ -89,6 +95,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "children-product",
+    label: "어린이제품 KC",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
     terms: ["유아", "아기", "아동", "어린이", "키즈", "베이비", "신생아", "이유식"],
@@ -97,14 +104,31 @@ export const RULES: Rule[] = [
   },
   {
     id: "electric",
+    label: "전기용품 KC",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
-    terms: ["충전", "전기", "전동", "usb", "어댑터", "배터리", "히터", "램프", "led", "선풍기", "드라이기", "멀티탭"],
+    terms: [
+      "충전", "전기", "전동", "usb", "어댑터", "배터리", "건전지", "히터", "램프", "led", "선풍기", "써큘레이터", "드라이기", "멀티탭",
+      // v2: 전원이 들어가는 생활가전 · 소형 기기 (상품명에 "충전 · 전기"가 없어도 대부분 전기용품)
+      "무선", "청소기", "가습기", "제습기", "공기청정기", "에어건", "송풍기", "랜턴", "손난로", "온열", "전기요", "온수매트", "믹서", "블렌더", "커피머신", "전기포트", "커피포트", "토스터", "에어프라이어", "면도기", "고데기", "안마기", "마사지기", "조명", "무드등",
+    ],
+    // 전기가 아닌 같은 단어 (손으로 쓰는 청소 도구 · 장식용)
+    unless: ["청소솔", "청소포", "밀대", "먼지떨이", "조명커버", "랜턴걸이", "랜턴고리", "전자레인지용"],
     source: `${LAW("전기용품 및 생활용품 안전관리법")} 안전인증 · 안전확인 · 공급자적합성확인 (KC)`,
-    action: "전기 · 전자 부품이 있는지 확인 → KC 인증 번호 확보",
+    action: "전원 · 배터리 · 충전부가 있는지 확인 → KC 인증 번호 확보 (수입이면 수입자 명의 인증 · 비용과 기간 확인)",
+  },
+  {
+    id: "radio",
+    label: "전파법 적합성평가",
+    area: "CERTIFICATION",
+    status: "REQUIRES_CERTIFICATION",
+    terms: ["블루투스", "bluetooth", "무선이어폰", "이어버드", "와이파이", "wifi", "리모컨", "무선충전", "무전기", "드론", "스마트워치", "스마트밴드", "무선마우스", "무선키보드", "무선스피커", "gps", "rc카", "카메라"],
+    source: `${LAW("전파법")} 제58조의2 방송통신기자재등의 적합성평가 (국립전파연구원 KC)`,
+    action: "무선 · 전자파 기기인지 확인 → 적합성평가(KC 전파) 인증 번호 확보. 미인증 수입 판매는 불법",
   },
   {
     id: "cosmetics",
+    label: "화장품 책임판매",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
     // "크림" 단독은 색상 이름(크림 · 크림베이지)과 겹쳐 쓰지 않는다
@@ -114,6 +138,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "food-health",
+    label: "식품 · 건강기능식품",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
     terms: ["영양제", "비타민", "건강기능식품", "유산균", "프로바이오틱스", "홍삼", "오메가3", "단백질보충", "다이어트식품"],
@@ -122,6 +147,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "medical-device",
+    label: "의료기기",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
     terms: ["의료기기", "체온계", "혈압계", "보청기", "콘택트렌즈", "kf94", "kf80", "찜질기"],
@@ -130,6 +156,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "household-chemical",
+    label: "생활화학제품",
     area: "CERTIFICATION",
     status: "REQUIRES_CERTIFICATION",
     terms: ["세정제", "세제", "방향제", "탈취제", "살균", "소독", "표백", "제습제", "방충"],
@@ -138,6 +165,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "restricted-goods",
+    label: "판매 제한 품목",
     area: "PROHIBITED",
     status: "MANUAL_REVIEW",
     terms: ["담배", "전자담배", "니코틴", "주류", "의약품", "처방", "모의총", "가스총", "석궁", "도검"],
@@ -146,6 +174,7 @@ export const RULES: Rule[] = [
   },
   {
     id: "counterfeit-signal",
+    label: "위조 · 모방 표현",
     area: "PROHIBITED",
     status: "MANUAL_REVIEW",
     terms: ["레플리카", "이미테이션", "미러급", "짝퉁", "정품아님", "st스타일", "스타일st"],
@@ -163,7 +192,9 @@ export function screenCompliance(input: ComplianceInput, checkedAt: string): { s
   const findings: ComplianceFinding[] = [];
 
   for (const r of RULES) {
-    let hit = r.terms.find((t) => text.includes(key(t)));
+    const excludedByUnless = r.unless?.some((t) => text.includes(key(t))) ?? false;
+    // 강한 단어에도 unless 를 적용한다 (v2 — "청소기"와 "청소솔" 구분). 약한 단어 규칙(food-contact)은 전과 같다
+    let hit = r.weakTerms ? r.terms.find((t) => text.includes(key(t))) : excludedByUnless ? undefined : r.terms.find((t) => text.includes(key(t)));
     let ctx: string | undefined;
     if (!hit && r.weakTerms) {
       const weak = r.weakTerms.find((t) => text.includes(key(t)));
@@ -248,3 +279,33 @@ export function overallStatus(findings: ComplianceFinding[]): ComplianceStatus {
 export const isGeneralCandidate = (s: ComplianceStatus | null) => s === "CLEARED";
 /** 일반 후보에서 제외 (기록은 남는다) */
 export const isExcluded = (s: ComplianceStatus | null) => s === "BLOCKED";
+
+const SEVERITY: Record<ComplianceStatus, number> = { BLOCKED: 5, MANUAL_REVIEW: 4, REQUIRES_CERTIFICATION: 3, REQUIRES_BRAND_PROOF: 2, UNKNOWN: 0, CLEARED: -1 };
+
+export interface EffectiveCompliance {
+  status: ComplianceStatus | null;
+  /** 걸린 인증 규칙 이름 (전기용품 KC · 전파법 …) */
+  certifications: string[];
+  /** 저장된 결과가 옛 규칙이라 지금 규칙으로 다시 봤는가 */
+  rescreened: boolean;
+}
+
+/**
+ * 판정에 쓸 판매 가능성 (PHASE 28). 사용자가 정한 상태는 그대로 쓴다.
+ * 자동 판단이면 지금 규칙으로 상품명 · 카테고리를 다시 보고, 저장된 상태와 더 엄격한 쪽을 쓴다
+ * (다음 자동 발굴 실행 전에도 새 규칙이 판정에 반영된다. 저장값의 브랜드 판단은 유지).
+ */
+export function effectiveCompliance(
+  stored: { status: string; decidedBy: string | null; ruleVersion: string | null } | null,
+  input: ComplianceInput,
+  checkedAt: string,
+): EffectiveCompliance {
+  if (stored?.decidedBy === "USER") return { status: stored.status as ComplianceStatus, certifications: [], rescreened: false };
+  const now = screenCompliance(input, checkedAt);
+  const certifications = now.findings
+    .filter((f) => f.area === "CERTIFICATION" && f.status === "REQUIRES_CERTIFICATION")
+    .map((f) => RULES.find((r) => r.id === f.rule)?.label ?? f.rule);
+  const s = (stored?.status ?? null) as ComplianceStatus | null;
+  const status = s && SEVERITY[s] >= SEVERITY[now.status] ? s : now.status;
+  return { status, certifications, rescreened: stored?.ruleVersion !== COMPLIANCE_RULE_VERSION };
+}

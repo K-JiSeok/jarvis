@@ -15,16 +15,22 @@
  *       단품 · 묶음 모두 원가 여유 없음 → 제외 / 실제 공급 원가로 순이익률 10% 미만 → 제외, 목표 미만 → 검토
  *       판매 추정 최소값 < 월 30개 → 검토까지 / 시장 위험 2개 이상 → 검토까지 / 판매 불가 확인 → 제외
  *   - 판정 옆에 신뢰도 A/B/C 와 그 이유를 붙인다.
+ *
+ * judge-v2.1 (PHASE 28) — 10-28 실제 데이터에서 드러난 세 가지를 막는다
+ *   - 계절성: 검색량이 급증했으면 급증 전 값으로 수요를 계산한다. 시즌 상품은 입고(약 6주) 뒤 남은 시즌이 60일 미만이면 검토까지
+ *   - 인증: 전기 · 전파 등 인증이 필요한 상품은 인증서 · 비용 확인 전 강력추천 불가 (판매 가능성 규칙 v2 와 함께)
+ *   - 판매량 과대 추정: 같은 키워드 상품 추정 중앙값의 3배를 넘으면 그 값으로 낮춘다 (옵션 리뷰 합산)
  */
 
 import { JUDGE_ASSUMPTIONS, JUDGE_THRESHOLDS, JUDGE_WEIGHTS } from "../../config/judge-assumptions";
 import type { UnitEconomics } from "../estimate/economics";
 import type { SalesEstimate } from "../estimate/sales";
 import type { MarketStructure } from "../market/structure";
+import { seasonOf, type SeasonResult, type VolumePoint } from "./season";
 import { interpolate, RULES } from "../scoring/engine";
 import type { Confidence, DataPoint, Verdict } from "../../types/common";
 
-export const JUDGE_VERSION = "judge-v2";
+export const JUDGE_VERSION = "judge-v2.1";
 
 /** 시장 데이터가 이 일수보다 오래되면 신뢰도 C · 재수집 안내 */
 export const STALE_DAYS = 14;
@@ -52,8 +58,16 @@ export interface JudgeInput {
   supplyMargin: { value: number; status: "CONFIRMED" | "ESTIMATED" } | null;
   /** 내 상품 WING 전환율 (있을 때만 가산) */
   conversionRate: number | null;
-  /** 판매 가능성 확인 상태 (product_compliance) */
+  /** 판매 가능성 확인 상태 (product_compliance · 새 규칙으로 다시 본 값) */
   compliance: string | null;
+  /** 걸린 인증 규칙 이름 (전기용품 KC · 전파법 …) — PHASE 28 */
+  certifications?: string[];
+  /** 상품명 (시즌 단어) — PHASE 28 */
+  productName?: string | null;
+  /** 이 키워드의 네이버 월 검색량 기록 (급증 판단) — PHASE 28 */
+  searchVolumeHistory?: VolumePoint[] | null;
+  /** 같은 키워드 상품들의 판매 추정 최소값 (과대 추정 판단) — PHASE 28 */
+  peerSalesMin?: number[] | null;
 }
 
 export type JudgePart = "demand" | "reviewBarrier" | "sellerMix" | "adBurden" | "economics" | "salesEvidence" | "priceFit";
@@ -68,7 +82,7 @@ export interface PartResult {
 }
 
 export interface JudgeRisk {
-  code: "RETAIL_DOMINANT" | "AD_HEAVY" | "REVIEW_WALL" | "LOW_MARGIN" | "LOW_DEMAND" | "CERTIFICATION" | "BLOCKED" | "PRICE_OUT_OF_BAND" | "STALE_DATA";
+  code: "RETAIL_DOMINANT" | "AD_HEAVY" | "REVIEW_WALL" | "LOW_MARGIN" | "LOW_DEMAND" | "CERTIFICATION" | "BLOCKED" | "PRICE_OUT_OF_BAND" | "STALE_DATA" | "SEASONAL" | "SALES_OUTLIER";
   message: string;
 }
 
@@ -91,6 +105,8 @@ export interface JudgeResult {
   missing: string[];
   risks: JudgeRisk[];
   positives: string[];
+  /** 시즌 · 검색량 급증 판단 (PHASE 28). 해당 없으면 null */
+  season: SeasonResult | null;
 }
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -128,14 +144,18 @@ export function judge(i: JudgeInput): JudgeResult {
   const positives: string[] = [];
 
   // 시장 ------------------------------------------------------------------------------
+  const season = seasonOf({ asOf: i.asOf, keyword: i.keyword, productName: i.productName ?? null, history: i.searchVolumeHistory ?? null });
+  const spike = season?.spike ?? null;
   const vol = i.searchVolume?.value ?? null;
   let demand: number | null = null;
   let demandBasis = "네이버 월 검색량 없음";
   if (vol != null) {
-    demand = interpolate(vol, RULES.demandVolume);
-    demandBasis = `월 검색량 ${vol.toLocaleString("ko-KR")}`;
+    // 급증했으면 급증 전 값으로 계산한다 (성수기 검색량을 1년 내내 있는 수요로 보지 않음)
+    const used = spike && spike.latest === vol ? spike.base : vol;
+    demand = interpolate(used, RULES.demandVolume);
+    demandBasis = used !== vol ? `월 검색량 ${vol.toLocaleString("ko-KR")} — 급증 전(${spike!.baseOn}) ${used.toLocaleString("ko-KR")} 기준` : `월 검색량 ${vol.toLocaleString("ko-KR")}`;
     const g = i.searchGrowthRate?.value;
-    if (g != null) {
+    if (g != null && used === vol) {
       demand = Math.min(100, Math.max(0, demand + Math.max(-10, Math.min(10, g * 20))));
       demandBasis += ` · 추세 ${g >= 0 ? "+" : ""}${pct(g)}`;
     }
@@ -177,9 +197,16 @@ export function judge(i: JudgeInput): JudgeResult {
   let salesEv: number | null = null;
   let salesBasis = "판매량 추정 없음 (상품 페이지 [최신순] 수집 필요)";
   const sm = i.sales?.monthly ?? null;
+  // 판매량 과대 추정 (PHASE 28): 같은 키워드 상품 5개 이상의 추정 최소값 중앙값 × 3 을 넘으면 그 값까지만 믿는다
+  const peers = (i.peerSalesMin ?? []).filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+  const peerMedian = peers.length >= 5 ? (peers.length % 2 ? peers[(peers.length - 1) / 2] : (peers[peers.length / 2 - 1] + peers[peers.length / 2]) / 2) : null;
+  const salesCap = peerMedian != null ? Math.round(peerMedian * A.salesOutlierMultiple.value) : null;
+  const outlier = sm != null && salesCap != null && sm.min > salesCap;
   if (sm) {
-    salesEv = interpolate(sm.min, CURVES.salesMin) * (i.sales!.confidence === "B" ? 1 : 0.85);
+    const usedMin = outlier ? salesCap! : sm.min;
+    salesEv = interpolate(usedMin, CURVES.salesMin) * (i.sales!.confidence === "B" ? 1 : 0.85);
     salesBasis = `추정 월 판매 ${sm.min.toLocaleString("ko-KR")}~${sm.max.toLocaleString("ko-KR")}개 (최소값 기준, 신뢰도 ${i.sales!.confidence ?? "-"})`;
+    if (outlier) salesBasis += ` → 같은 키워드 중앙값 ${Math.round(peerMedian!).toLocaleString("ko-KR")}개의 ${A.salesOutlierMultiple.value}배인 ${usedMin.toLocaleString("ko-KR")}개로 낮춰 판단`;
   }
   const [lo, hi] = A.priceBand.value;
   let priceFit: number | null = null;
@@ -211,7 +238,22 @@ export function judge(i: JudgeInput): JudgeResult {
   }
   if (sm && sm.min < A.minMonthlySales.value) risks.push({ code: "LOW_DEMAND", message: `보수적 추정 월 판매 ${sm.min}개 — 기준 ${A.minMonthlySales.value}개 미만` });
   if (i.compliance === "BLOCKED") risks.push({ code: "BLOCKED", message: "판매 불가로 확인한 상품" });
-  else if (i.compliance === "REQUIRES_CERTIFICATION" || i.compliance === "REQUIRES_BRAND_PROOF") risks.push({ code: "CERTIFICATION", message: i.compliance === "REQUIRES_CERTIFICATION" ? "인증 · 허가 · 신고 확인 필요" : "브랜드 · 정품 증빙 필요" });
+  else if (i.compliance === "REQUIRES_CERTIFICATION" || i.compliance === "REQUIRES_BRAND_PROOF") {
+    const which = i.certifications?.length ? ` (${i.certifications.join(" · ")})` : "";
+    risks.push({ code: "CERTIFICATION", message: i.compliance === "REQUIRES_CERTIFICATION" ? `인증 · 허가 · 신고 확인 필요${which} — 인증 비용 · 기간이 원가에 더해진다` : "브랜드 · 정품 증빙 필요" });
+  }
+  if (outlier) risks.push({ code: "SALES_OUTLIER", message: `판매 추정 최소 월 ${sm!.min.toLocaleString("ko-KR")}개 — 같은 키워드 중앙값의 ${A.salesOutlierMultiple.value}배 초과 (옵션별 리뷰가 합쳐졌을 수 있음)` });
+  const seasonShort = season?.group != null && (season.sellDaysAfterArrival ?? 0) < A.minSeasonSellDays.value;
+  if (season?.group) {
+    risks.push({
+      code: "SEASONAL",
+      message:
+        season.sellDaysAfterArrival === 0
+          ? `${season.group.label} 시즌 상품 ("${season.term}") — 지금 발주하면 ${season.arrivalOn} 입고, 그때는 비시즌 (다음 시즌 ${season.nextSeasonMonth}월)`
+          : `${season.group.label} 시즌 상품 ("${season.term}") — 지금 발주하면 ${season.arrivalOn} 입고, 남은 시즌 약 ${season.sellDaysAfterArrival}일. 시즌 뒤 남은 재고는 다음 시즌까지 보관`,
+    });
+  }
+  if (spike) risks.push({ code: "SEASONAL", message: `네이버 검색량 급증 ${spike.base.toLocaleString("ko-KR")}(${spike.baseOn}) → ${spike.latest.toLocaleString("ko-KR")}(${spike.latestOn}), +${pct(spike.ratio)} — 시즌 · 일시 유행일 수 있음` });
   if (i.price != null && (i.price < lo || i.price > hi)) risks.push({ code: "PRICE_OUT_OF_BAND", message: `판매가 ${won(i.price)} — 주력 가격대 밖` });
   const marketAge = m ? days(m.capturedOn, i.asOf) : null;
   if (marketAge != null && marketAge > STALE_DAYS) risks.push({ code: "STALE_DATA", message: `검색 결과가 ${marketAge}일 전 수집 — 다시 수집 필요` });
@@ -244,6 +286,21 @@ export function judge(i: JudgeInput): JudgeResult {
     if ((m?.risks.length ?? 0) >= 2) {
       verdict = cap(verdict, "REVIEW");
       gates.push(`시장 위험 ${m!.risks.length}개 → 검토까지`);
+    }
+    if (seasonShort) {
+      verdict = cap(verdict, "REVIEW");
+      gates.push(
+        season!.sellDaysAfterArrival === 0
+          ? `입고 예정 ${season!.arrivalOn} 은 비시즌 — 다음 시즌(${season!.nextSeasonMonth}월) 준비 상품 → 검토까지`
+          : `입고 뒤 남은 시즌 약 ${season!.sellDaysAfterArrival}일 < ${A.minSeasonSellDays.value}일 → 검토까지`,
+      );
+    } else if (spike && !season?.group) {
+      verdict = cap(verdict, "REVIEW");
+      gates.push("검색량 급증 원인(시즌 · 유행) 미확인 → 검토까지");
+    }
+    if (i.compliance === "REQUIRES_CERTIFICATION") {
+      verdict = cap(verdict, "REVIEW");
+      gates.push(`인증 필요${i.certifications?.length ? `(${i.certifications.join(" · ")})` : ""} — 공급처 인증서 · 인증 비용 확인 전 강력추천 불가 → 검토까지`);
     }
     if (!i.supplyMargin && verdict === "STRONG_BUY") {
       verdict = "REVIEW";
@@ -288,6 +345,7 @@ export function judge(i: JudgeInput): JudgeResult {
     missing,
     risks,
     positives,
+    season,
   };
 }
 

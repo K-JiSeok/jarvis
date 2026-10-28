@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 const { candidatesFromRelated } = await import("../../src/lib/automation/discovery.ts");
 const { searchResultFromRows, selectUnregistered, autoRegisterBatch, MAX_AUTO_REGISTER } = await import("../../src/lib/automation/selection.ts");
-const { screenCompliance, overallStatus, isGeneralCandidate, isExcluded, COMPLIANCE_RULE_VERSION } = await import("../../src/lib/automation/compliance.ts");
+const { screenCompliance, overallStatus, isGeneralCandidate, isExcluded, effectiveCompliance, COMPLIANCE_RULE_VERSION } = await import("../../src/lib/automation/compliance.ts");
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
@@ -145,7 +145,35 @@ test("판매 가능성: 공급 가능성은 항상 근거 부족 · 자동 판�
   assert.equal(overallStatus([{ area: "PROHIBITED", status: "BLOCKED", method: "USER" }, { area: "BRAND", status: "REQUIRES_BRAND_PROOF", method: "AUTO" }]), "BLOCKED");
   assert.ok(isGeneralCandidate("CLEARED") && !isGeneralCandidate("UNKNOWN") && !isGeneralCandidate("REQUIRES_CERTIFICATION"));
   assert.ok(isExcluded("BLOCKED") && !isExcluded("MANUAL_REVIEW"));
-  assert.equal(COMPLIANCE_RULE_VERSION, "compliance-rules-v1");
+  assert.equal(COMPLIANCE_RULE_VERSION, "compliance-rules-v2");
+});
+
+test("[PHASE 28] 전기 · 전파 규칙 v2: 무선 청소기 · 블루투스 · 랜턴은 인증 필요, 청소솔 · 밀대는 아님", () => {
+  const at = "2026-10-28T00:00:00Z";
+  const rules = (name) => screenCompliance({ productName: name, brand: null, category: null }, at).findings.filter((f) => f.status === "REQUIRES_CERTIFICATION").map((f) => f.rule);
+  assert.deepEqual(rules("차량용 무선 청소기 핸디형 초강력 흡입"), ["electric"]);
+  assert.deepEqual(rules("미니 핸디 청소기 차량용"), ["electric"]);
+  assert.ok(rules("블루투스 무선 스피커 캠핑").includes("radio") && rules("블루투스 무선 스피커 캠핑").includes("electric"));
+  assert.deepEqual(rules("캠핑 랜턴 감성 캠핑등"), ["electric"]);
+  assert.deepEqual(rules("차량용 청소솔 틈새 브러쉬"), []);
+  assert.deepEqual(rules("방풍비닐 투명 창문 외풍차단"), []);
+  assert.deepEqual(rules("허리 서포트 쿠션"), []);
+  assert.deepEqual(rules("보온보냉 주전자 1.5L"), []);
+  assert.deepEqual(rules("케이크토퍼 문구완전자유"), []);
+});
+
+test("[PHASE 28] effectiveCompliance: 사용자 판단 유지 · 자동이면 새 규칙과 저장값 중 엄격한 쪽", () => {
+  const at = "2026-10-28T00:00:00Z";
+  const input = { productName: "차량용 무선 청소기", brand: null, category: null };
+  const oldAuto = { status: "UNKNOWN", decidedBy: "AUTO", ruleVersion: "compliance-rules-v1" };
+  const e = effectiveCompliance(oldAuto, input, at);
+  assert.equal(e.status, "REQUIRES_CERTIFICATION");
+  assert.deepEqual(e.certifications, ["전기용품 KC"]);
+  assert.equal(e.rescreened, true);
+  assert.equal(effectiveCompliance({ status: "CLEARED", decidedBy: "USER", ruleVersion: "compliance-rules-v1" }, input, at).status, "CLEARED");
+  // 저장값이 더 엄격하면 (브랜드 · 판매 제한) 유지
+  assert.equal(effectiveCompliance({ status: "MANUAL_REVIEW", decidedBy: "AUTO", ruleVersion: "compliance-rules-v1" }, input, at).status, "MANUAL_REVIEW");
+  assert.equal(effectiveCompliance(null, { productName: "방풍비닐", brand: null, category: null }, at).status, "UNKNOWN");
 });
 
 // 발굴 → 후보 → 소싱 단계 (PHASE 21) ----------------------------------------------------

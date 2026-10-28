@@ -42,7 +42,7 @@ if (cand) {
       rating: c.rating,
       keyword: c.keyword,
       candidatesAt: cand.generatedAt,
-      versions: "est-sales-v1 · unit-econ-v2 · judge-v2",
+      versions: "est-sales-v1 · unit-econ-v2 · judge-v2.1",
     };
   }
 }

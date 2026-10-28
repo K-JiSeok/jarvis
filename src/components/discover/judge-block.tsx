@@ -5,13 +5,14 @@ import { cn } from "@/lib/utils";
 
 const CONF_STYLE = { A: "text-emerald-700 dark:text-emerald-300", B: "text-sky-700 dark:text-sky-300", C: "text-amber-700 dark:text-amber-300" } as const;
 
-/** 판정 V2 (PHASE 26 · judge-v2) — "로켓그로스로 팔면 확실히 남는가". 시장 50% + 상품 50%, 확실한 수익 관문 */
+/** 판정 V2 (PHASE 26 · judge-v2, PHASE 28 · v2.1 시즌 · 인증 · 판매 과대 추정) — "로켓그로스로 팔면 확실히 남는가". 시장 50% + 상품 50%, 확실한 수익 관문 */
 export function JudgeBlock({ j }: { j: JudgeResult }) {
   return (
     <section className="space-y-2 rounded-md border p-3 text-xs" data-testid="judge-v2" data-verdict={j.verdict ?? "NONE"}>
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="font-semibold">판정 V2</span>
+          <span className="text-muted-foreground">{j.version}</span>
           {j.verdict ? (
             <>
               <span className="text-lg font-bold tabular-nums">{j.total}</span>

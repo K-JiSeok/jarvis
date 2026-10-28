@@ -15,6 +15,7 @@ import { productStage, stageCounts } from "@/lib/discover/stage";
 import { loadStageRows } from "@/lib/repositories/stage";
 import { DiscoverProductCard } from "@/components/discover/discover-product-card";
 import { judge, supplyMarginOf, type JudgeResult } from "@/lib/judge/engine";
+import { effectiveCompliance } from "@/lib/automation/compliance";
 import { ReadinessList } from "@/components/discover/readiness-list";
 import { NAVER_PROXY_NOTE } from "@/components/keywords/naver-volume-form";
 import { Badge } from "@/components/ui/badge";
@@ -76,11 +77,16 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   const [sourcing, details] = await Promise.all([listSourcing(sorted.map((p) => p.id)), loadDetails(scopeIds)]);
   // 추정 판매 (PHASE 22): 전체 상품 — 판매량 추정 · 원가 상한 (Score V1 과 별개)
   const supa = await createClient();
-  const [estimates, { data: rankDays }, picks] = await Promise.all([
+  const [estimates, { data: rankDays }, picks, { data: volHist }] = await Promise.all([
     loadEstimates(allProducts.map((p) => p.id), details),
     supa.from("keyword_product_ranks").select("keyword_id, captured_on").order("captured_on", { ascending: false }).limit(5000),
     listDailyPicks(14),
+    // PHASE 28: 이 키워드의 네이버 검색량 기록 (급증 판단)
+    analysis
+      ? supa.from("keyword_snapshots").select("captured_on, search_volume, is_excluded").eq("keyword_id", analysis.keyword.id).not("search_volume", "is", null).limit(500)
+      : Promise.resolve({ data: [] as { captured_on: string; search_volume: number | null; is_excluded: boolean }[] }),
   ]);
+  const volumeHistory = (volHist ?? []).filter((h) => !h.is_excluded && h.search_volume != null).map((h) => ({ on: h.captured_on, value: Number(h.search_volume) }));
   const lastCollectedOf = new Map<string, string>();
   for (const r of rankDays ?? []) if (!lastCollectedOf.has(r.keyword_id)) lastCollectedOf.set(r.keyword_id, r.captured_on);
   const allowed30Of = (id: string) => estimates.get(id)?.opportunity.allowedCost.find((x) => x.margin === 0.3)?.cost ?? null;
@@ -94,8 +100,15 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   });
   // 판정 V2 (PHASE 26): 이 키워드의 시장 구조(Score 입력에 이미 있음) + 추정 판매 · 단위 경제성 + 상세 원가 + 판매 가능성
   const judgments = new Map<string, JudgeResult>();
+  const brandOf = new Map(allProducts.map((p) => [p.id, p.brand]));
+  // PHASE 28: 같은 키워드 상품들의 판매 추정 최소값 (과대 추정 판단)
+  const peerSalesMin = sorted.map((p) => estimates.get(p.id)?.sales?.monthly?.min).filter((x): x is number => x != null);
+  const nowIso = new Date().toISOString();
   for (const p of sorted) {
     const e = estimates.get(p.id);
+    const stored = compliance.get(p.id);
+    // 자동 판단은 지금 규칙(compliance-rules-v2)으로 다시 본다 — 저장값보다 엄격하면 그쪽
+    const comp = effectiveCompliance(stored ? { status: stored.status, decidedBy: stored.decidedBy, ruleVersion: stored.ruleVersion } : null, { productName: p.productName, brand: brandOf.get(p.id) ?? null, category: null }, nowIso);
     judgments.set(
       p.id,
       judge({
@@ -109,7 +122,11 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
         economics: e?.economics ?? null,
         supplyMargin: supplyMarginOf(details.get(p.id)?.result),
         conversionRate: p.input.product.metrics?.conversionRate?.value ?? null,
-        compliance: compliance.get(p.id)?.status ?? null,
+        compliance: comp.status,
+        certifications: comp.certifications,
+        productName: p.productName,
+        searchVolumeHistory: volumeHistory,
+        peerSalesMin,
       }),
     );
   }

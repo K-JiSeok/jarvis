@@ -130,6 +130,73 @@ test("상세 원가 → 순이익률: 확정 우선, 없으면 추정 최악값"
   assert.equal(supplyMarginOf(null), null);
 });
 
+// PHASE 28 · judge-v2.1 ------------------------------------------------------------------
+const { seasonOf, volumeSpike, seasonGroupOf } = await import("../../src/lib/judge/season.ts");
+
+test("[PHASE 28] 검색량 급증: 방풍비닐 13,150(10-13) → 26,960(10-28) = +105% / 7일 안 기록만 있으면 판단 안 함", () => {
+  const s = volumeSpike([{ on: "2026-10-13", value: 13150 }, { on: "2026-10-28", value: 26960 }]);
+  assert.equal(s.base, 13150);
+  assert.ok(Math.abs(s.ratio - 1.05) < 0.01);
+  assert.equal(volumeSpike([{ on: "2026-10-13", value: 16980 }, { on: "2026-10-28", value: 22020 }]), null); // 케이크토퍼 +30%
+  assert.equal(volumeSpike([{ on: "2026-10-25", value: 100 }, { on: "2026-10-28", value: 300 }]), null);
+});
+
+test("[PHASE 28] 시즌 사전 · 입고 뒤 남은 시즌: 방풍비닐 10-28 발주 → 12-09 입고, 1월 말까지 54일", () => {
+  assert.equal(seasonGroupOf("방풍비닐 창문 외풍차단").group.id, "winter-draft");
+  assert.equal(seasonGroupOf("나무도마"), null);
+  const s = seasonOf({ asOf: "2026-10-28", keyword: "방풍비닐", productName: null, history: null });
+  assert.equal(s.arrivalOn, "2026-12-09");
+  assert.equal(s.sellDaysAfterArrival, 54);
+  const off = seasonOf({ asOf: "2026-02-01", keyword: "선풍기", productName: null, history: null });
+  assert.equal(off.sellDaysAfterArrival, 0);
+  assert.equal(off.nextSeasonMonth, 5);
+  // 3-25 발주 → 5-06 입고 (시즌 중) · 3-01 발주 → 4-12 입고, 시즌 시작(5-01) 30일 안이라 시즌 전체(5~8월 123일)
+  assert.equal(seasonOf({ asOf: "2026-03-01", keyword: "선풍기", productName: null, history: null }).sellDaysAfterArrival, 123);
+  assert.equal(seasonOf({ asOf: "2026-01-10", keyword: "선풍기", productName: null, history: null }).sellDaysAfterArrival, 0);
+});
+
+test("[PHASE 28] 시즌 상품: 급증 전 검색량으로 수요 계산 · 남은 시즌 60일 미만이면 검토까지", () => {
+  const history = [{ on: "2026-10-13", value: 13150 }, { on: "2026-10-28", value: 26960 }];
+  const plain = judge(base({ keyword: "방풍비닐", searchVolume: dp(26960), searchGrowthRate: null }));
+  const r = judge(base({ keyword: "방풍비닐", searchVolume: dp(26960), searchGrowthRate: null, searchVolumeHistory: history, asOf: "2026-10-28" }));
+  const demand = (x) => x.parts.find((p) => p.part === "demand");
+  assert.ok(demand(r).score < demand(plain).score, `${demand(r).score} < ${demand(plain).score}`);
+  assert.ok(demand(r).basis.includes("급증 전"));
+  assert.equal(r.verdict, "REVIEW");
+  assert.ok(r.gates.some((g) => g.includes("남은 시즌")));
+  assert.ok(r.risks.some((x) => x.code === "SEASONAL"));
+  assert.equal(r.season.group.id, "winter-draft");
+});
+
+test("[PHASE 28] 사전에 없는 급증 → 원인 미확인 검토까지 / 시즌 아닌 상품은 영향 없음", () => {
+  const r = judge(base({ searchVolumeHistory: [{ on: "2026-10-10", value: 10000 }, { on: "2026-10-27", value: 30000 }] }));
+  assert.equal(r.verdict, "REVIEW");
+  assert.ok(r.gates.some((g) => g.includes("급증 원인")));
+  const n = judge(base({ searchVolumeHistory: [{ on: "2026-10-10", value: 28000 }, { on: "2026-10-27", value: 30000 }] }));
+  assert.equal(n.verdict, "STRONG_BUY");
+  assert.equal(n.season, null);
+});
+
+test("[PHASE 28] 판매량 과대 추정: 같은 키워드 중앙값 × 3 으로 낮춤 · 위험 표시 / 동료 5개 미만이면 그대로", () => {
+  const peers = [40, 60, 80, 100, 120, 2560];
+  const r = judge(base({ sales: sales(2560, 12800), peerSalesMin: peers }));
+  const ev = r.parts.find((p) => p.part === "salesEvidence");
+  assert.ok(ev.basis.includes("낮춰"));
+  assert.ok(r.risks.some((x) => x.code === "SALES_OUTLIER"));
+  const ok = judge(base({ sales: sales(2560, 12800), peerSalesMin: [40, 60, 2560] }));
+  assert.ok(!ok.risks.some((x) => x.code === "SALES_OUTLIER"));
+  const normal = judge(base({ sales: sales(150, 700), peerSalesMin: peers }));
+  assert.ok(!normal.risks.some((x) => x.code === "SALES_OUTLIER"));
+});
+
+test("[PHASE 28] 인증 필요(전기용품 KC) → 실제 원가가 좋아도 검토까지 · 위험에 규칙 이름", () => {
+  const r = judge(base({ compliance: "REQUIRES_CERTIFICATION", certifications: ["전기용품 KC"] }));
+  assert.equal(r.scoreVerdict, "STRONG_BUY");
+  assert.equal(r.verdict, "REVIEW");
+  assert.ok(r.gates.some((g) => g.includes("전기용품 KC")));
+  assert.ok(r.risks.some((x) => x.code === "CERTIFICATION" && x.message.includes("전기용품 KC")));
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {
