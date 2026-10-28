@@ -24,30 +24,42 @@ const all = async (q) => {
   if (error) throw new Error(error.message);
   return data;
 };
+// PHASE 29: API 는 한 번에 1,000행까지만 준다 (service role 도 같음) → 큰 표는 1,000행씩 끝까지 읽는다.
+// make() 는 매번 새 쿼리를 만들고, 순서가 바뀌지 않는 정렬(id 등)을 붙인다.
+const allPaged = async (make) => {
+  const out = [];
+  for (let from = 0; from < 200_000; from += 1000) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  return out;
+};
 
 const [prods, latest, snaps, rows, cardRows, watch, comp, links, picks, ranks, kws, kwLatest, kwHist] = await Promise.all([
-  all(db.from("products").select("id, coupang_product_id, product_name, brand, created_at").eq("owner_id", owner)),
-  all(db.from("v_product_latest").select("product_id, price, review_count, rating, delivery_type, seller_type_observed, snapshot_count").eq("owner_id", owner)),
-  all(db.from("product_snapshots").select("product_id, captured_on, review_count, is_excluded").eq("owner_id", owner).not("review_count", "is", null).limit(20000)),
-  all(
+  allPaged(() => db.from("products").select("id, coupang_product_id, product_name, brand, created_at").eq("owner_id", owner).order("id")),
+  allPaged(() => db.from("v_product_latest").select("product_id, price, review_count, rating, delivery_type, seller_type_observed, snapshot_count").eq("owner_id", owner).order("product_id")),
+  allPaged(() => db.from("product_snapshots").select("product_id, captured_on, review_count, is_excluded").eq("owner_id", owner).not("review_count", "is", null).order("id")),
+  allPaged(() =>
     db
       .from("import_rows")
       .select("record_key, created_at, mb:payload->collected->observedOnly->>monthlyBuyers, rd:payload->collected->observedOnly->>reviewDates, cat:payload->collected->observedOnly->>category")
       .eq("owner_id", owner)
       .like("record_key", "product\\_snapshot:%")
       .order("created_at", { ascending: false })
-      .limit(20000),
+      .order("id"),
   ),
   all(db.from("cost_rate_cards").select("*").or(`owner_id.is.null,owner_id.eq.${owner}`)),
   all(db.from("watchlist").select("product_id, status").eq("owner_id", owner)),
-  all(db.from("product_compliance").select("product_id, status, decided_by, rule_version").eq("owner_id", owner)),
+  allPaged(() => db.from("product_compliance").select("product_id, status, decided_by, rule_version").eq("owner_id", owner).order("product_id")),
   all(db.from("product_supply_links").select("product_id, user_status").eq("owner_id", owner)),
   all(db.from("daily_picks").select("product_id, pick_date, status, picked_by, rank, title").eq("owner_id", owner).gte("pick_date", new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10))),
-  all(db.from("keyword_product_ranks").select("product_id, keyword_id, captured_on, rank_position, is_ad").eq("owner_id", owner).order("captured_on", { ascending: false }).limit(20000)),
+  allPaged(() => db.from("keyword_product_ranks").select("product_id, keyword_id, captured_on, rank_position, is_ad").eq("owner_id", owner).order("captured_on", { ascending: false }).order("id")),
   all(db.from("keywords").select("id, keyword, is_tracking").eq("owner_id", owner)),
   all(db.from("v_keyword_latest").select("keyword_id, search_volume, search_growth_rate, search_volume_source, search_volume_confidence, search_volume_captured_on").eq("owner_id", owner)),
   // PHASE 28: 검색량 기록 (급증 판단)
-  all(db.from("keyword_snapshots").select("keyword_id, captured_on, search_volume, is_excluded").eq("owner_id", owner).not("search_volume", "is", null).limit(20000)),
+  allPaged(() => db.from("keyword_snapshots").select("keyword_id, captured_on, search_volume, is_excluded").eq("owner_id", owner).not("search_volume", "is", null).order("id")),
 ]);
 
 const cards = cardRows.map((r) => ({ id: r.id, ownerId: r.owner_id, kind: r.kind, scope: r.scope, rates: r.rates, vatBasis: r.vat_basis, validFrom: r.valid_from, validTo: r.valid_to, promoUntil: r.promo_until, sourceUrl: r.source_url, sourceLabel: r.source_label, checkedOn: r.checked_on, verification: r.verification, note: r.note }));

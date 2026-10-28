@@ -160,6 +160,11 @@ test("[PHASE 28] 전기 · 전파 규칙 v2: 무선 청소기 · 블루투스 ·
   assert.deepEqual(rules("허리 서포트 쿠션"), []);
   assert.deepEqual(rules("보온보냉 주전자 1.5L"), []);
   assert.deepEqual(rules("케이크토퍼 문구완전자유"), []);
+  // PHASE 29: 가스 · 유선 전자기기(EMC) · 액세서리 제외
+  assert.deepEqual(rules("캠핑 요리용 토치"), ["gas-appliance"]);
+  assert.deepEqual(rules("저소음 사무용 키보드"), ["radio"]);
+  assert.deepEqual(rules("대형 마우스패드 데스크매트"), []);
+  assert.deepEqual(rules("캠핑화로대 접이식"), []);
 });
 
 test("[PHASE 28] effectiveCompliance: 사용자 판단 유지 · 자동이면 새 규칙과 저장값 중 엄격한 쪽", () => {

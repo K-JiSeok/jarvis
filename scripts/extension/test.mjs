@@ -95,7 +95,7 @@ test("Extension", "배경: 예약 자동 발굴은 JARVIS 서버만 · 쿠팡 �
 });
 
 {
-  const { AUTO_COLLECT_RULES: R, isDue, pickKeywords, nextDelayMinutes, searchUrl, isAllowedAutoUrl, kst, summarize } = await import("../../extension/src/shared/auto-collect.ts");
+  const { AUTO_COLLECT_RULES: R, isDue, pickKeywords, nextDelayMinutes, searchUrl, isAllowedAutoUrl, kst, summarize, isSettled } = await import("../../extension/src/shared/auto-collect.ts");
   const at = (iso) => Date.parse(iso);
   test("Extension", "자동 수집 규칙: 주 1회 · 9시(KST) 이후 · 실행 중 아님 · 끄면 안 돎", () => {
     assert.equal(kst(at("2026-10-28T00:30:00Z")).hour, 9);
@@ -131,6 +131,15 @@ test("Extension", "배경: 예약 자동 발굴은 JARVIS 서버만 · 쿠팡 �
     for (const bad of ["https://www.coupang.com/vp/products/1", "https://www.coupang.com/np/search?q=a&page=2", "https://www.coupang.com/np/search", "https://evil.com/np/search?q=a", "not a url"]) assert.equal(isAllowedAutoUrl(bad), false, bad);
     const sum = summarize({ startedAt: "a", trigger: "MANUAL", queue: [], results: [{ keyword: "x", ok: true, message: "", at: "" }, { keyword: "y", ok: false, message: "", at: "" }] }, "b");
     assert.deepEqual([sum.total, sum.ok, sum.failed], [2, 1, 1]);
+  });
+  test("Extension", "[PHASE 29] 검색 결과가 다 그려질 때까지 기다림: 36칸 이상 · 10칸 이상 3초 그대로 · 최대 20초", () => {
+    assert.equal(isSettled([2]), false, "2칸 — 10-28 캠핑랜턴");
+    assert.equal(isSettled([2, 2, 2]), false, "10칸 미만은 그대로여도 더 기다림");
+    assert.equal(isSettled([12, 20, 28]), false, "늘어나는 중");
+    assert.equal(isSettled([12, 28, 28, 28]), true, "3초 그대로");
+    assert.equal(isSettled([40]), true, "충분");
+    assert.equal(isSettled(Array(20).fill(2)), true, "20초 넘으면 그만 (결과가 적은 키워드)");
+    assert.equal(R.settleMaxSeconds, 20);
   });
 }
 test("Extension", "빌드 결과물에 service role 키 없음 · 공개 키만", () => {

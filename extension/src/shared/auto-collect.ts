@@ -25,6 +25,15 @@ export const AUTO_COLLECT_RULES = {
   maxDelayMinutes: 2,
   /** 탭 하나를 기다리는 최대 시간 */
   tabTimeoutMs: 60_000,
+  /**
+   * 검색 결과가 다 그려질 때까지 기다리기 (PHASE 29). 10-28 자동 수집은 상품이 보이자마자 읽어
+   * 칸 수가 수동 수집의 절반(20~40칸), 캠핑랜턴은 2칸뿐이었다.
+   * 1초마다 칸 수를 세어 이 칸 수 이상이거나, 10칸 이상에서 3번 연속 같으면 다 그려진 것으로 본다. 최대 20초.
+   */
+  settleEnoughItems: 36,
+  settleMinItems: 10,
+  settleStableChecks: 3,
+  settleMaxSeconds: 20,
 } as const;
 
 export interface TrackedKeyword {
@@ -84,6 +93,16 @@ export function pickKeywords(list: TrackedKeyword[], nowMs: number, force = fals
     .map((k) => k.keyword.trim())
     .filter((k) => (seen.has(k) ? false : (seen.add(k), true)))
     .slice(0, AUTO_COLLECT_RULES.maxKeywords);
+}
+
+/** 지금까지 1초마다 센 칸 수로 "다 그려졌다"고 볼 수 있는가 (PHASE 29) */
+export function isSettled(counts: number[]): boolean {
+  const R = AUTO_COLLECT_RULES;
+  const last = counts.at(-1) ?? 0;
+  if (last >= R.settleEnoughItems) return true;
+  if (counts.length >= R.settleMaxSeconds) return true;
+  const tail = counts.slice(-R.settleStableChecks);
+  return last >= R.settleMinItems && tail.length === R.settleStableChecks && tail.every((n) => n === last);
 }
 
 /** 다음 키워드까지 기다릴 시간 (분). rand 는 0~1 */

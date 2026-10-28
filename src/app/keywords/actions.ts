@@ -69,6 +69,7 @@ export async function setTrackingAction(keywordId: string, isTracking: boolean):
   if (!(await getCurrentUser())) return;
   await updateKeyword(keywordId, { isTracking });
   revalidatePath("/keywords");
+  revalidatePath("/discover");
   revalidatePath(`/keywords/${keywordId}`);
 }
 

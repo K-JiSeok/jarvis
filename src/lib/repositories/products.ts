@@ -2,6 +2,7 @@ import "server-only";
 
 import { toCategoryOption } from "@/lib/mappers/keyword";
 import { toProductDetail, toProductSnapshotView, toProductSummary } from "@/lib/mappers/product";
+import { fetchAllRows } from "@/lib/supabase/paged";
 import { createClient } from "@/lib/supabase/server";
 import type { Confidence } from "@/types/common";
 import type { Json, ProductLatestRow, TablesUpdate } from "@/types/db";
@@ -27,12 +28,14 @@ async function categoryMap(): Promise<Map<string, CategoryOption>> {
 /** 상품 목록. 기본은 DELETED 제외, status 를 주면 그 상태만 */
 export async function listProducts({ status }: { status?: LifecycleStatus | "ALL" } = {}): Promise<ProductSummary[]> {
   const supabase = await createClient();
-  let query = supabase.from("v_product_latest").select("*").order("last_seen_at", { ascending: false });
-  if (status && status !== "ALL") query = query.eq("lifecycle_status", status);
-  else if (!status) query = query.neq("lifecycle_status", "DELETED");
-
-  const [{ data, error }, categories] = await Promise.all([query, categoryMap()]);
-  if (error) throw error;
+  // PHASE 29: 1,000행 넘으면 끝까지 나눠 읽는다
+  const page = (a: number, b: number) => {
+    let query = supabase.from("v_product_latest").select("*").order("last_seen_at", { ascending: false }).order("product_id");
+    if (status && status !== "ALL") query = query.eq("lifecycle_status", status);
+    else if (!status) query = query.neq("lifecycle_status", "DELETED");
+    return query.range(a, b);
+  };
+  const [data, categories] = await Promise.all([fetchAllRows(page), categoryMap()]);
 
   const ranks = await latestKeywordRanks(data.map((r) => r.product_id!).filter(Boolean));
   return data.map((row) => toProductSummary(row, categories, ranks.get(row.product_id!) ?? null));

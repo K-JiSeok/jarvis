@@ -79,7 +79,7 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   const supa = await createClient();
   const [estimates, { data: rankDays }, picks, { data: volHist }] = await Promise.all([
     loadEstimates(allProducts.map((p) => p.id), details),
-    supa.from("keyword_product_ranks").select("keyword_id, captured_on").order("captured_on", { ascending: false }).limit(5000),
+    supa.from("v_keyword_collection_days").select("keyword_id, captured_on").order("captured_on", { ascending: false }).limit(1000),
     listDailyPicks(14),
     // PHASE 28: 이 키워드의 네이버 검색량 기록 (급증 판단)
     analysis
@@ -88,7 +88,7 @@ export default async function DiscoverPage({ searchParams }: PageProps<"/discove
   ]);
   const volumeHistory = (volHist ?? []).filter((h) => !h.is_excluded && h.search_volume != null).map((h) => ({ on: h.captured_on, value: Number(h.search_volume) }));
   const lastCollectedOf = new Map<string, string>();
-  for (const r of rankDays ?? []) if (!lastCollectedOf.has(r.keyword_id)) lastCollectedOf.set(r.keyword_id, r.captured_on);
+  for (const r of rankDays ?? []) if (r.keyword_id && r.captured_on && !lastCollectedOf.has(r.keyword_id)) lastCollectedOf.set(r.keyword_id, r.captured_on);
   const allowed30Of = (id: string) => estimates.get(id)?.opportunity.allowedCost.find((x) => x.margin === 0.3)?.cost ?? null;
   const sourcingOf = (id: string) => ({ query: sourcing.queries.get(id) ?? null, links: sourcing.links.get(id) ?? [], detail: details.get(id)?.result ?? null, stage: stageOf.get(id) ?? null, keywordId: analysis?.keyword.id ?? null, allowedCost30: allowed30Of(id) });
   const nameOf = new Map(allProducts.map((p) => [p.id, p.productName ?? "(이름 없음)"]));

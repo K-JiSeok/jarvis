@@ -13,6 +13,11 @@ import { createClient } from "@/lib/supabase/server";
 const CHUNK = 100;
 
 export async function getMarketStructure(keywordId: string): Promise<MarketStructure | null> {
+  return (await getMarketSnapshot(keywordId))?.market ?? null;
+}
+
+/** 시장 구조 + 그날 검색 결과에 나온 등록 상품 id (PHASE 29 키워드 기회 화면) */
+export async function getMarketSnapshot(keywordId: string): Promise<{ capturedOn: string; market: MarketStructure | null; productIds: string[] } | null> {
   const supabase = await createClient();
   const { data: last, error: e1 } = await supabase
     .from("keyword_product_ranks")
@@ -62,5 +67,5 @@ export async function getMarketStructure(keywordId: string): Promise<MarketStruc
       observed: (l?.snapshot_count ?? 0) > 0,
     };
   });
-  return marketStructure(last.captured_on, items);
+  return { capturedOn: last.captured_on, market: marketStructure(last.captured_on, items), productIds: ids };
 }

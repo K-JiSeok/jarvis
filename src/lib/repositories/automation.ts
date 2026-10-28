@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ComplianceFinding, ComplianceStatus } from "@/lib/automation/compliance";
 import type { StepResult } from "@/lib/automation/pipeline";
+import { fetchAllRows } from "@/lib/supabase/paged";
 import { createClient } from "@/lib/supabase/server";
 
 /* 자동 발굴 결과 조회 (PHASE 17, 읽기 전용) */
@@ -95,10 +96,15 @@ export interface ComplianceView {
 
 export async function listCompliance(productIds?: string[]): Promise<Map<string, ComplianceView>> {
   const supabase = await createClient();
-  let q = supabase.from("product_compliance").select("*");
-  if (productIds) q = q.in("product_id", productIds);
-  const { data, error } = await q;
-  if (error) throw error;
+  // PHASE 29: 상품이 1,000개를 넘어도 끝까지 읽는다. id 가 100개를 넘으면 주소 한도(16KB) 때문에 전체를 읽고 거른다
+  const few = productIds && productIds.length <= 100 ? productIds : null;
+  const wanted = productIds ? new Set(productIds) : null;
+  const rows = await fetchAllRows((a, b) => {
+    let q = supabase.from("product_compliance").select("*").order("product_id");
+    if (few) q = q.in("product_id", few);
+    return q.range(a, b);
+  });
+  const data = wanted ? rows.filter((c) => wanted.has(c.product_id)) : rows;
   return new Map(
     data.map((c) => [
       c.product_id,

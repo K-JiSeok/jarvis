@@ -5,6 +5,7 @@ import { v1Coverage } from "@/lib/discover/coverage";
 import { discoverStatus } from "@/lib/discover/summary";
 import { registerSelected } from "@/lib/ingest/service";
 import { collectNaverSearchVolumes, fetchRelatedKeywords } from "@/lib/ingest/naver-searchad";
+import { fetchAllRows } from "@/lib/supabase/paged";
 import { getDiscoverAnalysis } from "@/lib/repositories/discover";
 import { listKeywords } from "@/lib/repositories/keywords";
 import { listSearchObservations } from "@/lib/repositories/search-observations";
@@ -134,12 +135,16 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
     // 2. 연관 키워드 → 후보 --------------------------------------------------------
     await step("keyword-discovery", async (): Promise<StepOut> => {
       // 시드: 추적 키워드 + 등록 상품의 쿠팡 카테고리 끝 단계 (상품 페이지에서 읽은 값 — 연결된 상품군으로 탐색 범위를 넓힌다)
-      const { data: catRows } = await supabase
-        .from("import_rows")
-        .select("category:payload->collected->observedOnly->>category")
-        .like("record_key", "product\\_snapshot:%")
-        .not("payload->collected->observedOnly->>category", "is", null)
-        .limit(5000);
+      // PHASE 29: 1,000행 넘으면 끝까지 나눠 읽는다
+      const catRows = await fetchAllRows((a, b) =>
+        supabase
+          .from("import_rows")
+          .select("category:payload->collected->observedOnly->>category")
+          .like("record_key", "product\\_snapshot:%")
+          .not("payload->collected->observedOnly->>category", "is", null)
+          .order("id")
+          .range(a, b),
+      );
       const trackedKeys = new Set(tracked.map((k) => k.keyword.replace(/\s+/g, "").toLowerCase()));
       const categorySeeds = [
         ...new Set(
@@ -295,18 +300,21 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
 
     // 4. 판매 가능성 사전 검토 -------------------------------------------------------
     await step("compliance", async (): Promise<StepOut> => {
-      const [{ data: prods, error }, { data: current }, { data: cats }] = await Promise.all([
-        supabase.from("products").select("id, coupang_product_id, product_name, brand"),
-        supabase.from("product_compliance").select("product_id, decided_by, status"),
-        supabase
-          .from("import_rows")
-          .select("record_key, created_at, category:payload->collected->observedOnly->>category")
-          .like("record_key", "product\\_snapshot:%")
-          .not("payload->collected->observedOnly->>category", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(5000),
+      // PHASE 29: 상품 · 판매 가능성 · 카테고리 모두 1,000행 넘으면 끝까지 나눠 읽는다
+      const [prods, current, cats] = await Promise.all([
+        fetchAllRows((a, b) => supabase.from("products").select("id, coupang_product_id, product_name, brand").order("id").range(a, b)),
+        fetchAllRows((a, b) => supabase.from("product_compliance").select("product_id, decided_by, status").order("product_id").range(a, b)),
+        fetchAllRows((a, b) =>
+          supabase
+            .from("import_rows")
+            .select("record_key, created_at, category:payload->collected->observedOnly->>category")
+            .like("record_key", "product\\_snapshot:%")
+            .not("payload->collected->observedOnly->>category", "is", null)
+            .order("created_at", { ascending: false })
+            .order("id")
+            .range(a, b),
+        ),
       ]);
-      if (error) throw error;
       const userDecided = new Set((current ?? []).filter((c) => c.decided_by === "USER").map((c) => c.product_id));
       const categoryOf = new Map<string, string>();
       for (const c of cats ?? []) {

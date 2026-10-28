@@ -175,12 +175,12 @@ export function BroadenPanel({ newCandidates, top, tracked }: { newCandidates: n
       <CardHeader>
         <CardTitle>발굴 범위 넓히기</CardTitle>
         <CardDescription>
-          대기 중인 키워드 후보 {newCandidates.toLocaleString("ko-KR")}개 (네이버 검색광고 연관 키워드 — 네이버 검색 수요 참고, 쿠팡 검색량 아님). 일괄 등록은 브랜드 키워드 · 월 10만 이상 한 단어(너무 넓음)를 건너뜁니다. 추적 키워드로 등록하면 다음 자동 실행부터 검색량 · 연관 키워드를 모으고, 쿠팡 검색
+          대기 중인 키워드 후보 {newCandidates.toLocaleString("ko-KR")}개 (네이버 검색광고 연관 키워드 — 네이버 검색 수요 참고, 쿠팡 검색량 아님). 일괄 등록은 키워드 발굴 화면의 수집 대기열 순서를 따릅니다 (브랜드 · 서비스 · 의류 · 인증 부담 · 비시즌 · 너무 넓은 키워드를 거른 뒤 점수 순). 추적 키워드로 등록하면 다음 자동 실행부터 검색량 · 연관 키워드를 모으고, 쿠팡 검색
           결과를 열어 수집하면 상품이 자동 등록됩니다.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-xs">
-        <p>검색량 상위 후보: {top.map((t) => `${t.keyword} (${t.volume?.toLocaleString("ko-KR") ?? "-"})`).join(" · ") || "없음"}</p>
+        <p>검색량 상위 후보 (참고 — 등록 순서는 수집 대기열): {top.map((t) => `${t.keyword} (${t.volume?.toLocaleString("ko-KR") ?? "-"})`).join(" · ") || "없음"}</p>
         <PromoteTopForm />
         <section className="space-y-1">
           <h3 className="text-sm font-semibold">오늘 열어 볼 쿠팡 검색 (추적 키워드)</h3>

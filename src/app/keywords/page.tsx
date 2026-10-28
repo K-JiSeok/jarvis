@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { LoginRequired } from "@/components/common/login-required";
 import { PageHeader } from "@/components/common/page-header";
 import { KeywordCreateForm } from "@/components/keywords/keyword-create-form";
+import { CollectionQueueCard, KeywordOpportunityCard } from "@/components/keywords/opportunity-panel";
 import { KeywordsTable } from "@/components/keywords/keywords-table";
 import { NaverCollectBar } from "@/components/keywords/naver-volume-form";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { findNavItem } from "@/config/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { isNaverMockBaseUrl, naverSearchAdConfig } from "@/lib/ingest/naver-searchad";
+import { listCollectionQueue, listKeywordOpportunities } from "@/lib/repositories/keyword-opportunity";
 import { listCategories, listKeywords } from "@/lib/repositories/keywords";
 import { listNaverStatus } from "@/lib/repositories/naver-status";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
@@ -30,13 +32,17 @@ export default async function KeywordsPage() {
     );
   }
 
-  const [keywords, categories, naverStatus] = await Promise.all([listKeywords(), listCategories(), listNaverStatus()]);
+  const [keywords, categories, naverStatus, opportunities, queue] = await Promise.all([listKeywords(), listCategories(), listNaverStatus(), listKeywordOpportunities(), listCollectionQueue()]);
   const naverConfig = naverSearchAdConfig();
   const tracking = keywords.filter((k) => k.isTracking).length;
 
   return (
     <>
       <PageHeader title={nav.label} description={nav.description} actions={<Badge>LIVE</Badge>} />
+
+      {/* PHASE 29: 어떤 키워드에 수집 칸을 쓸지 — 추적 키워드의 시장 · 수집 상태, 다음에 추적할 후보 */}
+      <KeywordOpportunityCard items={opportunities.items} asOf={opportunities.asOf} />
+      <CollectionQueueCard {...queue} />
 
       <Card>
         <CardHeader>

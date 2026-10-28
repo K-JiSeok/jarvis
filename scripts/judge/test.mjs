@@ -197,6 +197,59 @@ test("[PHASE 28] 인증 필요(전기용품 KC) → 실제 원가가 좋아도 �
   assert.ok(r.risks.some((x) => x.code === "CERTIFICATION" && x.message.includes("전기용품 KC")));
 });
 
+// PHASE 29 · 키워드 기회 · 수집 대기열 -----------------------------------------------------
+const { keywordOpportunity, sortOpportunities, queueCandidate } = await import("../../src/lib/discover/keyword-opportunity.ts");
+const prod = (verdict, total, hasSales = true, certification = false) => ({ verdict, total, hasSales, certification });
+const kwIn = (over = {}) => ({ keyword: "케이크토퍼", asOf: "2026-10-28", searchVolume: 22000, volumeHistory: [], market: marketStructure("2026-10-28", easyMarket().items ?? []), collectedDays: ["2026-10-13", "2026-10-28"], products: [prod("REVIEW", 80), prod("REVIEW", 75), prod("EXCLUDE", 50), prod("REVIEW", 70), prod(null, null, false), prod("REVIEW", 66)], ...over });
+
+test("[PHASE 29] 키워드 기회: 판매 추정 5개 이상 → 판정 가능 · 최고 판정 / 시장 점수는 판정 V2 시장 부분과 같다", () => {
+  const m = easyMarket();
+  const o = keywordOpportunity(kwIn({ market: m }));
+  assert.equal(o.stage, "JUDGEABLE");
+  assert.deepEqual(o.best, { verdict: "REVIEW", total: 80 });
+  assert.equal(o.salesCount, 5);
+  assert.equal(o.verdicts.REVIEW, 4);
+  const j = judge(base({ keyword: "케이크토퍼", searchVolume: dp(22000), searchGrowthRate: null, market: m, asOf: "2026-10-28" }));
+  assert.equal(o.marketScore, j.marketScore);
+});
+
+test("[PHASE 29] 키워드 기회 단계: 수집 없음 · 1회 수집(7일 뒤 재수집일) · 시장 부적합 · 오래됨", () => {
+  assert.equal(keywordOpportunity(kwIn({ market: null, collectedDays: [], products: [] })).stage, "NEED_SEARCH");
+  const once = keywordOpportunity(kwIn({ market: easyMarket(), collectedDays: ["2026-10-28"], products: [prod(null, null, false)] }));
+  assert.equal(once.stage, "WAIT_SALES");
+  assert.equal(once.regatherOn, "2026-11-04");
+  const poor = keywordOpportunity(kwIn({ market: hardMarket(), searchVolume: 800 }));
+  assert.equal(poor.stage, "POOR_MARKET");
+  const thin = keywordOpportunity(kwIn({ market: marketStructure("2026-10-28", [item(1, 30, null), item(2, 40, null)]) }));
+  assert.equal(thin.stage, "NEED_SEARCH", "자연 순위 2칸 — 10-28 캠핑랜턴");
+  const thinJ = judge(base({ market: marketStructure("2026-10-27", [item(1, 30, null), item(2, 40, null)]) }));
+  assert.equal(thinJ.verdict, null, "칸이 적으면 시장 구조를 쓰지 않아 판정 보류");
+  assert.ok(thinJ.missing.some((x) => x.includes("2칸뿐")));
+  const stale = keywordOpportunity(kwIn({ market: easyMarket(), collectedDays: ["2026-10-01"] }));
+  assert.equal(stale.stage, "STALE");
+  const sorted = sortOpportunities([poor, once, keywordOpportunity(kwIn({ market: easyMarket() }))]).map((x) => x.stage);
+  assert.deepEqual(sorted, ["JUDGEABLE", "WAIT_SALES", "POOR_MARKET"]);
+});
+
+test("[PHASE 29] 수집 대기열: 브랜드 · 서비스 · 의류 · 인증 부담 · 비시즌 · 검색량 부족은 건너뛰고 나머지는 점수", () => {
+  const q = (keyword, searchVolume = 10000, compIdx = "중간") => queueCandidate({ keyword, searchVolume, compIdx }, "2026-10-28");
+  assert.equal(q("오왈라텀블러").skip, "BRAND");
+  assert.equal(q("캠핑카렌트").skip, "NOT_GOODS");
+  assert.equal(q("여성가디건").skip, "FASHION");
+  assert.equal(q("신발장").skip, null);
+  assert.equal(q("무선키보드").skip, "HEAVY_CERT");
+  assert.equal(q("전기난로").skip, "HEAVY_CERT");
+  assert.equal(q("모기장").skip, "OFF_SEASON");
+  assert.equal(q("규조토발매트", 2000).skip, "LOW_VOLUME");
+  const a = q("규조토발매트", 15660, "중간");
+  const b = q("캠핑테이블", 53100, "중간");
+  const c = q("수저세트", 21160, "중간");
+  assert.equal(a.skip, null);
+  assert.ok(a.score > b.score, `${a.score} > ${b.score}`); // 너무 큰 시장은 뒤로
+  assert.ok(c.notes.some((n) => n.includes("식품용 기구")));
+  assert.ok(q("발매트", 20000, "낮음").score > q("발매트", 20000, "높음").score);
+});
+
 let passed = 0;
 for (const [name, fn] of tests) {
   try {

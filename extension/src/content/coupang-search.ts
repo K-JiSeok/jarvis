@@ -10,6 +10,7 @@
  * 자동 등록 없음: 체크하지 않은 상품은 만들지 않는다. 광고 · 순위가 높은 상품도 자동으로 고르지 않는다.
  */
 
+import { isSettled } from "../shared/auto-collect";
 import { EXT_VERSION } from "../shared/constants";
 import { adaptSearchPage, correctedQueryOf, previewRecords, searchParamsOf } from "../shared/normalize";
 import type { CollectResponse, IngestRecord, LastRun, LookupResult, Message, RegisterResult } from "../shared/types";
@@ -350,6 +351,12 @@ chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) =>
       d = collector.detect();
     }
     if (!d.collectable) return { ok: false, message: d.reason ?? "수집할 수 없는 화면입니다." };
+    // PHASE 29: 검색 결과가 다 그려질 때까지 기다린다 (상품이 보이자마자 읽으면 칸이 빠진다)
+    const counts = [productUnits().length];
+    while (!isSettled(counts)) {
+      await new Promise((r) => setTimeout(r, 1000));
+      counts.push(productUnits().length);
+    }
     const { keyword } = searchParamsOf(location.href);
     if ((keyword ?? "").trim() !== message.keyword.trim()) return { ok: false, message: `화면 검색어 "${keyword}"가 요청한 "${message.keyword}"와 다릅니다.` };
     if (busy) return { ok: false, message: "이미 수집 중입니다." };

@@ -135,6 +135,10 @@ test("[PHASE 23] 키워드 거르기: 브랜드 · 월 10만 이상 한 단어�
   assert.equal(keywordFilter("캠핑 의자", 120000), null); // 한 단어 아님
   assert.equal(keywordFilter("나무도마", 16750), null);
   assert.equal(keywordFilter("코일매트", null), null);
+  // v2: 브랜드 보강 · 오탐 수정 ("데일리" · "보스턴백"은 브랜드 아님)
+  assert.equal(keywordFilter("오왈라텀블러", 22290), "BRAND");
+  assert.equal(keywordFilter("데일리 텀블러", 5000), null);
+  assert.equal(keywordFilter("보스턴백", 9000), null);
 });
 
 let passed = 0;

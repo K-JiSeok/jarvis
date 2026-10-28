@@ -96,9 +96,9 @@ begin
 
   select count(*) into v_n from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind = 'v'
-    and c.relname in ('v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual')
+    and c.relname in ('v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual', 'v_keyword_collection_days')
     and 'security_invoker=true' = any (c.reloptions);
-  perform pg_temp.jv_assert('S02 뷰 4개 (security_invoker)', v_n = 4, format('%s', v_n));
+  perform pg_temp.jv_assert('S02 뷰 5개 (security_invoker · PHASE 29 수집일 뷰 포함)', v_n = 5, format('%s', v_n));
 
   select count(*) into v_n from pg_type t join pg_namespace n on n.oid = t.typnamespace
   where n.nspname = 'public' and t.typtype = 'd'
@@ -537,6 +537,9 @@ begin
   values (pg_temp.jv('kw'), pg_temp.jv('p1'), '2026-10-07', now(), 'EXTENSION', 'B', 3, false),
          (pg_temp.jv('kw'), pg_temp.jv('p1'), '2026-10-07', now(), 'EXTENSION', 'B', 1, true);
   perform pg_temp.jv_assert('K01 같은 날 광고/자연 순위 각각 저장', true);
+  perform pg_temp.jv_assert('K03 수집일 뷰: 키워드 · 날짜별 칸 2 · 자연 1 · 상품 1 (PHASE 29)',
+    (select cells = 2 and organic_cells = 1 and products = 1 from public.v_keyword_collection_days
+      where keyword_id = pg_temp.jv('kw') and captured_on = '2026-10-07'));
 end;
 $$;
 select pg_temp.jv_expect_error('K02 keyword_product_ranks UNIQUE (keyword, product, 날짜, 출처, is_ad)',
@@ -1618,13 +1621,13 @@ begin
     'automation_runs', 'keyword_candidates', 'product_compliance',
     'sourcing_queries', 'supply_offers', 'supply_offer_snapshots', 'product_supply_links', 'fx_rates',
     'supply_cost_snapshots', 'cost_settings', 'product_cost_inputs', 'product_cost_calculations', 'daily_picks',
-    'v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual'] loop
+    'v_product_latest', 'v_keyword_latest', 'v_current_scores', 'v_prediction_vs_actual', 'v_keyword_collection_days'] loop
     execute format('select count(*) from public.%I', t) into v_n;
     if v_n <> 0 then
       raise exception 'FAIL B01: B 가 % 에서 A 의 행 %개를 봄', t, v_n;
     end if;
   end loop;
-  perform pg_temp.jv_pass('B01 SELECT 차단 (31개 테이블 + 4개 뷰)');
+  perform pg_temp.jv_pass('B01 SELECT 차단 (31개 테이블 + 5개 뷰)');
 
   perform pg_temp.jv_assert('CD12 B 는 시스템 요율만 보고 A 의 요율 행은 못 봄',
     (select count(*) = 25 from public.cost_rate_cards) and not exists (select 1 from public.cost_rate_cards where owner_id is not null));
@@ -1856,6 +1859,7 @@ $$;
 set local role anon;
 select pg_temp.jv_expect_error('N01 anon products SELECT 거부', $q$select count(*) from public.products$q$, '42501');
 select pg_temp.jv_expect_error('N02 anon 뷰 SELECT 거부', $q$select count(*) from public.v_product_latest$q$, '42501');
+select pg_temp.jv_expect_error('N06 anon 수집일 뷰 SELECT 거부 (PHASE 29)', $q$select count(*) from public.v_keyword_collection_days$q$, '42501');
 select pg_temp.jv_expect_error('N03 anon scoring_versions SELECT 거부', $q$select count(*) from public.scoring_versions$q$, '42501');
 select pg_temp.jv_expect_error('N04 anon RPC 실행 거부', $q$select public.rollback_import(gen_random_uuid())$q$, '42501');
 select pg_temp.jv_expect_error('N05 anon INSERT 거부',

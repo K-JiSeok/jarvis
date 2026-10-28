@@ -7,6 +7,7 @@ import { costRecord } from "@/lib/sourcing/cost-record";
 import { calculateLandedCost, pickUnitPrice, type LandedCostResult } from "@/lib/sourcing/landed-cost";
 import { matchSupply, type MatchLevel, type MatchResult } from "@/lib/sourcing/matching";
 import { toSourcingQuery, type SourcingQuery } from "@/lib/sourcing/translate";
+import { fetchAllRows } from "@/lib/supabase/paged";
 import { createClient } from "@/lib/supabase/server";
 import type { Json, TablesInsert } from "@/types/database";
 
@@ -147,22 +148,28 @@ export interface ProductCtx {
 /** 상품 문맥: 이름 · 상품 페이지 카테고리 · 현재 판매가 · 카테고리 수수료율(설정돼 있을 때만) */
 export async function productContexts(ids?: string[]): Promise<Map<string, ProductCtx>> {
   const supabase = await createClient();
-  let pq = supabase.from("products").select("id, coupang_product_id, product_name, category_id");
   // 100개 이하만 주소에 넣는다 (그보다 많으면 전체를 읽고 아래에서 거름 — 요청 주소 16KB 한도)
-  if (ids && ids.length <= 100) pq = pq.in("id", ids);
-  const [{ data: prods, error }, { data: latest }, { data: cats }, { data: catRows }] = await Promise.all([
-    pq,
-    supabase.from("v_product_latest").select("product_id, price"),
+  // PHASE 29: 1,000행 넘는 표는 끝까지 나눠 읽는다 (fetchAllRows)
+  const few = ids && ids.length <= 100 ? ids : null;
+  const [prods, latest, { data: cats }, catRows] = await Promise.all([
+    fetchAllRows((a, b) => {
+      let q = supabase.from("products").select("id, coupang_product_id, product_name, category_id").order("id");
+      if (few) q = q.in("id", few);
+      return q.range(a, b);
+    }),
+    fetchAllRows((a, b) => supabase.from("v_product_latest").select("product_id, price").order("product_id").range(a, b)),
     supabase.from("categories").select("id, coupang_fee_rate"),
-    supabase
-      .from("import_rows")
-      .select("record_key, created_at, category:payload->collected->observedOnly->>category")
-      .like("record_key", "product\\_snapshot:%")
-      .not("payload->collected->observedOnly->>category", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(5000),
+    fetchAllRows((a, b) =>
+      supabase
+        .from("import_rows")
+        .select("record_key, created_at, category:payload->collected->observedOnly->>category")
+        .like("record_key", "product\\_snapshot:%")
+        .not("payload->collected->observedOnly->>category", "is", null)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(a, b),
+    ),
   ]);
-  if (error) throw error;
   const priceOf = new Map((latest ?? []).map((l) => [l.product_id, l.price]));
   const feeOf = new Map((cats ?? []).map((c) => [c.id, c.coupang_fee_rate]));
   const catOf = new Map<string, string>();

@@ -2632,6 +2632,17 @@ export type Database = {
           },
         ]
       }
+      v_keyword_collection_days: {
+        Row: {
+          captured_on: string | null
+          cells: number | null
+          keyword_id: string | null
+          organic_cells: number | null
+          owner_id: string | null
+          products: number | null
+        }
+        Relationships: []
+      }
       v_prediction_vs_actual: {
         Row: {
           coverage_days: number | null

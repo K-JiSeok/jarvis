@@ -18,14 +18,15 @@ export async function POST(request: Request) {
   const ids = (kws ?? []).map((k) => k.id);
   const last = new Map<string, string>();
   if (ids.length) {
-    const { data: ranks, error: e2 } = await supabase
-      .from("keyword_product_ranks")
+    // PHASE 29: 날짜 단위 뷰 (순위 행 전체는 1,000행 제한에 걸려 오래된 키워드의 수집일이 빠진다)
+    const { data: days, error: e2 } = await supabase
+      .from("v_keyword_collection_days")
       .select("keyword_id, captured_on")
       .in("keyword_id", ids)
       .order("captured_on", { ascending: false })
-      .limit(5000);
+      .limit(1000);
     if (e2) return apiJson(origin, { error: "조회 중 오류가 났습니다." }, 500);
-    for (const r of ranks ?? []) if (!last.has(r.keyword_id)) last.set(r.keyword_id, r.captured_on);
+    for (const r of days ?? []) if (r.keyword_id && r.captured_on && !last.has(r.keyword_id)) last.set(r.keyword_id, r.captured_on);
   }
   return apiJson(origin, { ok: true, keywords: (kws ?? []).map((k) => ({ keyword: k.keyword, lastCollectedOn: last.get(k.id) ?? null })) });
 }

@@ -6,7 +6,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { COMPLIANCE_STATUSES, type ComplianceFinding, type ComplianceStatus } from "@/lib/automation/compliance";
 import { runDiscoveryPipeline } from "@/lib/automation/pipeline";
 import { dbErrorMessage, fail, isPgError, type FormState } from "@/lib/forms";
-import { keywordFilter } from "@/lib/automation/keyword-filter";
+import { QUEUE_SKIP_LABELS } from "@/lib/discover/keyword-opportunity";
+import { listCollectionQueue } from "@/lib/repositories/keyword-opportunity";
 import { createKeyword, findKeywordIdByText } from "@/lib/repositories/keywords";
 import { setPickStatus } from "@/lib/repositories/picks";
 import { linkOffer } from "@/lib/repositories/sourcing";
@@ -73,7 +74,8 @@ export async function promoteCandidateAction(candidateId: string): Promise<FormS
     if (!isPgError(error, "23505")) return fail(dbErrorMessage(error));
   }
   revalidatePath("/discover");
-  return { ok: true, message: `"${c.keyword}" 을(를) 추적 키워드로 등록했습니다. 다음 자동 실행부터 검색량 · 연관 키워드를 수집합니다.` };
+  revalidatePath("/keywords");
+  return { ok: true, message: `"${c.keyword}" 을(를) 추적 키워드로 등록했습니다. 다음 자동 실행부터 검색량 · 연관 키워드를, 확장 프로그램 자동 수집이 쿠팡 검색 결과를 모읍니다.` };
 }
 
 export async function dismissCandidateAction(candidateId: string): Promise<FormState> {
@@ -83,6 +85,7 @@ export async function dismissCandidateAction(candidateId: string): Promise<FormS
   const { error } = await supabase.from("keyword_candidates").update({ status: "DISMISSED" }).eq("id", candidateId).eq("status", "NEW");
   if (error) return fail(dbErrorMessage(error));
   revalidatePath("/discover");
+  revalidatePath("/keywords");
   return { ok: true, message: "후보에서 뺐습니다 (기록은 남습니다)." };
 }
 
@@ -199,29 +202,22 @@ export async function bulkStartSourcingAction(_prev: FormState, formData: FormDa
   return { ok: started > 0, message: `선택 ${ids.length}개 중 ${started}개 소싱 시작${skipped.length ? ` · 건너뜀 ${skipped.length}개: ${skipped.join(", ")}` : ""}` };
 }
 
-/** 발굴 범위 넓히기 (PHASE 22): 대기 후보 중 네이버 검색량 상위 n개를 추적 키워드로 (10 미만 · 이미 등록된 키워드는 건너뜀) */
+/**
+ * 발굴 범위 넓히기 (PHASE 22): 대기 후보 상위 n개를 추적 키워드로.
+ * PHASE 29: 검색량 순 대신 수집 대기열 순서(kw-opportunity-v1)를 쓴다 — 브랜드 · 서비스 · 의류 · 인증 부담 · 비시즌을 거른 뒤 점수 순.
+ */
 export async function promoteTopCandidatesAction(_prev: FormState, formData: FormData): Promise<FormState> {
   if (!(await getCurrentUser())) return fail("로그인이 필요합니다.");
   const n = Math.min(20, Math.max(1, Number(formData.get("n") ?? 10) || 10));
   const supabase = await createClient();
-  // 브랜드 · 너무 넓은 키워드는 건너뛴다 (PHASE 23 · kw-filter-v1) — 후보는 그대로 남고 직접 등록은 가능
-  const { data: pool, error } = await supabase
-    .from("keyword_candidates")
-    .select("id, keyword, search_volume")
-    .eq("status", "NEW")
-    .eq("below_10", false)
-    .not("search_volume", "is", null)
-    .order("search_volume", { ascending: false })
-    .limit(n * 10);
-  if (error) return fail(dbErrorMessage(error));
-  const skipped: string[] = [];
-  const cands = [];
-  for (const c of pool ?? []) {
-    if (cands.length >= n) break;
-    const why = keywordFilter(c.keyword, c.search_volume);
-    if (why) skipped.push(`${c.keyword}(${why === "BRAND" ? "브랜드" : "너무 넓음"})`);
-    else cands.push(c);
+  let queue;
+  try {
+    queue = await listCollectionQueue(n);
+  } catch (e) {
+    return fail(dbErrorMessage(e));
   }
+  const cands = queue.items;
+  const skipped = (Object.entries(queue.skipped) as [keyof typeof QUEUE_SKIP_LABELS, number][]).map(([k, v]) => `${QUEUE_SKIP_LABELS[k]} ${v}개`);
   const done: string[] = [];
   for (const c of cands) {
     try {
@@ -235,7 +231,8 @@ export async function promoteTopCandidatesAction(_prev: FormState, formData: For
     }
   }
   revalidatePath("/discover");
-  const skipTxt = skipped.length ? ` · 건너뜀 ${skipped.length}개: ${skipped.slice(0, 10).join(", ")}` : "";
+  revalidatePath("/keywords");
+  const skipTxt = skipped.length ? ` · 거른 후보: ${skipped.join(", ")}` : "";
   return { ok: done.length > 0, message: done.length ? `${done.length}개를 추적 키워드로 등록했습니다: ${done.join(", ")}. 다음 자동 실행부터 검색량 · 연관 키워드를 모읍니다.${skipTxt}` : `등록할 후보가 없습니다.${skipTxt}` };
 }
 

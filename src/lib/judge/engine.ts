@@ -35,6 +35,9 @@ export const JUDGE_VERSION = "judge-v2.1";
 /** 시장 데이터가 이 일수보다 오래되면 신뢰도 C · 재수집 안내 */
 export const STALE_DAYS = 14;
 
+/** 검색 결과 자연 순위가 이보다 적으면 시장 구조를 쓰지 않는다 (PHASE 29 — 시장 구조는 상위 10개 기준) */
+export const MIN_ORGANIC = 10;
+
 const CURVES = {
   adRatio: [[0.1, 100], [0.2, 70], [0.3, 40], [0.5, 0]],
   /** 단품 1개로 쓸 수 있는 도착 원가(원) → 경제성 (공급 원가를 모를 때) */
@@ -139,7 +142,9 @@ function weighted(parts: PartResult[]): { score: number | null; min: number; max
 export function judge(i: JudgeInput): JudgeResult {
   const W = JUDGE_WEIGHTS;
   const A = JUDGE_ASSUMPTIONS;
-  const m = i.market;
+  // PHASE 29: 화면이 다 그려지기 전에 읽어 칸이 적은 검색 결과는 시장 구조로 쓰지 않는다 (10-28 캠핑랜턴 2칸)
+  const thinMarket = i.market != null && i.market.organic < MIN_ORGANIC;
+  const m = thinMarket ? null : i.market;
   const risks: JudgeRisk[] = [];
   const positives: string[] = [];
 
@@ -161,14 +166,14 @@ export function judge(i: JudgeInput): JudgeResult {
     }
   }
   let review: number | null = null;
-  let reviewBasis = "검색 결과 수집 없음";
+  let reviewBasis = thinMarket ? `검색 결과 자연 순위 ${i.market!.organic}칸뿐 — 다시 수집 필요` : "검색 결과 수집 없음";
   if (m?.medianReviews != null) {
     const low = m.reviewKnown ? (m.lowReviewCount / m.reviewKnown) * 100 : 0;
     review = 0.7 * interpolate(m.medianReviews, RULES.reviewCount) + 0.3 * low;
     reviewBasis = `상위 ${m.topN}개 리뷰 중앙값 ${Math.round(m.medianReviews).toLocaleString("ko-KR")}개 · 100개 미만 ${m.lowReviewCount}/${m.reviewKnown}`;
   }
   let sellerMix: number | null = null;
-  let sellerBasis = m ? `판매자 유형 확인 ${m.sellerKnown}개 (비율 계산에 부족)` : "검색 결과 수집 없음";
+  let sellerBasis = m ? `판매자 유형 확인 ${m.sellerKnown}개 (비율 계산에 부족)` : thinMarket ? `검색 결과 자연 순위 ${i.market!.organic}칸뿐 — 다시 수집 필요` : "검색 결과 수집 없음";
   if (m?.thirdPartyRatio != null && m.retailRatio != null) {
     sellerMix = (interpolate(m.thirdPartyRatio, RULES.wingRatio) + interpolate(m.retailRatio, RULES.retailRatio)) / 2;
     sellerBasis = `제3자 판매자 ${pct(m.thirdPartyRatio)} · 쿠팡 직매입 ${pct(m.retailRatio)}`;
@@ -255,7 +260,7 @@ export function judge(i: JudgeInput): JudgeResult {
   }
   if (spike) risks.push({ code: "SEASONAL", message: `네이버 검색량 급증 ${spike.base.toLocaleString("ko-KR")}(${spike.baseOn}) → ${spike.latest.toLocaleString("ko-KR")}(${spike.latestOn}), +${pct(spike.ratio)} — 시즌 · 일시 유행일 수 있음` });
   if (i.price != null && (i.price < lo || i.price > hi)) risks.push({ code: "PRICE_OUT_OF_BAND", message: `판매가 ${won(i.price)} — 주력 가격대 밖` });
-  const marketAge = m ? days(m.capturedOn, i.asOf) : null;
+  const marketAge = i.market ? days(i.market.capturedOn, i.asOf) : null;
   if (marketAge != null && marketAge > STALE_DAYS) risks.push({ code: "STALE_DATA", message: `검색 결과가 ${marketAge}일 전 수집 — 다시 수집 필요` });
 
   // 관문 ------------------------------------------------------------------------------

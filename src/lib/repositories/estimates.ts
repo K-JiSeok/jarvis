@@ -7,6 +7,7 @@ import { estimateOpportunity, type Opportunity } from "@/lib/estimate/opportunit
 import { estimateSales, type SalesEstimate } from "@/lib/estimate/sales";
 import { listRateCards } from "@/lib/repositories/costs";
 import { productContexts } from "@/lib/repositories/sourcing";
+import { fetchAllRows } from "@/lib/supabase/paged";
 import { createClient } from "@/lib/supabase/server";
 
 /*
@@ -33,20 +34,24 @@ export async function loadEstimates(productIds: string[], details: Map<string, {
   const out = new Map<string, EstimateView>();
   if (productIds.length === 0) return out;
   const supabase = await createClient();
-  const [ctx, cards, { data: prods }, { data: snaps }, { data: rows }, { data: latest }] = await Promise.all([
+  // 상품이 수백 개면 .in(ids) 주소가 16KB 를 넘는다 → 사용자 전체(RLS)를 읽고 아래에서 거른다
+  // PHASE 29: API 는 한 번에 1,000행까지만 준다 → 끝까지 나눠 읽는다 (안 그러면 오래된 리뷰 수 기록이 빠져 판매 추정이 틀어진다)
+  const [ctx, cards, prods, snaps, rows, latest] = await Promise.all([
     productContexts(productIds),
     listRateCards(),
-    // 상품이 수백 개면 .in(ids) 주소가 16KB 를 넘는다 → 사용자 전체(RLS)를 읽고 아래에서 거른다
-    supabase.from("products").select("id, coupang_product_id").limit(20000),
-    supabase.from("product_snapshots").select("product_id, captured_on, review_count, is_excluded").not("review_count", "is", null).order("captured_on").limit(50000),
-    supabase
-      .from("import_rows")
-      .select("record_key, created_at, mb:payload->collected->observedOnly->>monthlyBuyers, rd:payload->collected->observedOnly->>reviewDates, cap:payload->collected->>capturedAt")
-      .like("record_key", "product\\_snapshot:%")
-      .or("payload->collected->observedOnly->>monthlyBuyers.not.is.null,payload->collected->observedOnly->>reviewDates.not.is.null")
-      .order("created_at", { ascending: false })
-      .limit(20000),
-    supabase.from("v_product_latest").select("product_id, review_count").limit(20000),
+    fetchAllRows((a, b) => supabase.from("products").select("id, coupang_product_id").order("id").range(a, b)),
+    fetchAllRows((a, b) => supabase.from("product_snapshots").select("product_id, captured_on, review_count, is_excluded").not("review_count", "is", null).order("captured_on").order("id").range(a, b)),
+    fetchAllRows((a, b) =>
+      supabase
+        .from("import_rows")
+        .select("record_key, created_at, mb:payload->collected->observedOnly->>monthlyBuyers, rd:payload->collected->observedOnly->>reviewDates, cap:payload->collected->>capturedAt")
+        .like("record_key", "product\\_snapshot:%")
+        .or("payload->collected->observedOnly->>monthlyBuyers.not.is.null,payload->collected->observedOnly->>reviewDates.not.is.null")
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(a, b),
+    ),
+    fetchAllRows((a, b) => supabase.from("v_product_latest").select("product_id, review_count").order("product_id").range(a, b)),
   ]);
   const reviewsOf = new Map((latest ?? []).map((l) => [l.product_id, l.review_count]));
   const wanted = new Set(productIds);
