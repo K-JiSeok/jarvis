@@ -5,6 +5,7 @@ import { v1Coverage } from "@/lib/discover/coverage";
 import { discoverStatus } from "@/lib/discover/summary";
 import { registerSelected } from "@/lib/ingest/service";
 import { collectNaverSearchVolumes, fetchRelatedKeywords } from "@/lib/ingest/naver-searchad";
+import { recordJudgePredictions } from "@/lib/repositories/validation";
 import { fetchAllRows } from "@/lib/supabase/paged";
 import { getDiscoverAnalysis } from "@/lib/repositories/discover";
 import { listKeywords } from "@/lib/repositories/keywords";
@@ -29,6 +30,7 @@ import { autoRegisterBatch, searchResultFromRows, selectUnregistered } from "./s
  *                       같은 수집 기록은 같은 멱등 키 → 다시 실행해도 중복 생성 없음
  *   4. compliance       모든 상품의 판매 가능성 사전 검토 (사용자 판단은 덮어쓰지 않음)
  *   5. analysis         키워드별 Score V1 미리 보기 · 대표 수익성 · 준비 상태 집계 (점수 저장 안 함 — 기존 정책)
+ *   7. predictions      (PHASE 30) 판정 · 판매 추정 예측 기록 — 검증 루프용, 상품 · 버전 · 데이터 기준일마다 1행
  *
  * 실행 안정성
  *   - 사용자당 RUNNING 1개 (DB 부분 UNIQUE). 15분 넘게 RUNNING 이면 비정상 종료로 보고 FAILED 로 정리한 뒤 새로 시작
@@ -59,7 +61,21 @@ export type RunOutcome =
 
 const kstToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 const escLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
-const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 500);
+/** 오류 문구. Supabase 오류는 Error 가 아닌 객체라 String() 하면 "[object Object]" 가 된다 (10-29 자동 발굴 analysis 실패) */
+const errText = (e: unknown) => {
+  if (e instanceof Error) return e.message.slice(0, 500);
+  if (e && typeof e === "object") {
+    const o = e as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+    const parts = [o.message, o.code && `code ${o.code}`, o.details, o.hint].filter((x) => typeof x === "string" && x);
+    if (parts.length) return parts.join(" · ").slice(0, 500);
+    try {
+      return JSON.stringify(e).slice(0, 500);
+    } catch {
+      /* 순환 참조 */
+    }
+  }
+  return String(e).slice(0, 500);
+};
 
 async function acquire(userId: string, trigger: RunTrigger): Promise<{ id: string } | Extract<RunOutcome, { ok: false }>> {
   const supabase = await createClient();
@@ -396,9 +412,17 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       const profit = new Set<string>();
       const rank = { FINAL: 0, PROVISIONAL: 1, INSUFFICIENT: 2 } as const;
       const missing: Record<string, number> = {};
+      const failures: string[] = [];
       for (const k of tracked) {
         // 화면은 30개씩 보지만 자동 실행은 연결 상품 전부 (최대 100개)
-        const a = await getDiscoverAnalysis(k.id, { limit: 100 });
+        // PHASE 30: 한 키워드가 실패해도 나머지 키워드는 계속 (전에는 한 번 실패하면 단계 전체가 FAILED)
+        let a: Awaited<ReturnType<typeof getDiscoverAnalysis>> = null;
+        try {
+          a = await getDiscoverAnalysis(k.id, { limit: 100 });
+        } catch (e) {
+          failures.push(`${k.keyword}: ${errText(e)}`);
+          continue;
+        }
         for (const p of a?.products ?? []) {
           const s = discoverStatus(p.preview);
           const prev = best.get(p.id);
@@ -416,7 +440,20 @@ export async function runDiscoveryPipeline(userId: string, trigger: RunTrigger):
       summary.profitDone = profit.size;
       summary.missingFactors = missing;
       summary.v1Coverage = v1Coverage([...perProduct.values()]) as unknown as Json;
-      return { counts: { analyzed: best.size, final: count("FINAL"), provisional: count("PROVISIONAL"), insufficient: count("INSUFFICIENT"), profitDone: profit.size, missingFactors: missing } };
+      if (failures.length === tracked.length && tracked.length > 0) throw new Error(failures.join(" / "));
+      return {
+        counts: { analyzed: best.size, final: count("FINAL"), provisional: count("PROVISIONAL"), insufficient: count("INSUFFICIENT"), profitDone: profit.size, missingFactors: missing, failedKeywords: failures.length },
+        note: failures.length ? failures.join(" / ").slice(0, 1000) : undefined,
+      };
+    });
+
+    // 7. 판정 예측 기록 (PHASE 30 검증 루프) -----------------------------------------
+    // 추적 키워드의 상품마다 "그 검색 결과 수집일 기준" 판정 · 판매 추정을 한 번만 남긴다 (수정 불가 표 · 중복 없음).
+    // 다음 수집에서 실제로 늘어난 리뷰 · 쿠팡 표시 하한과 비교해 검증 화면에 보여 준다.
+    await step("predictions", async (): Promise<StepOut> => {
+      const r = await recordJudgePredictions();
+      summary.predictionsInserted = r.inserted;
+      return { counts: r, status: r.candidates === 0 ? "SKIPPED" : "OK", note: r.candidates === 0 ? "판매 추정이 있는 추적 키워드 상품 없음" : undefined };
     });
   } catch (e) {
     steps.push({ name: "pipeline", status: "FAILED", counts: {}, error: errText(e), ms: 0 });

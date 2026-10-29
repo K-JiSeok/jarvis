@@ -109,26 +109,26 @@ export async function getDiscoverAnalysis(keywordId: string, { limit = DISCOVER_
   const reviewsOf = new Map<string, { capturedOn: string; value: number }[]>();
   for (const r of reviewRows ?? []) reviewsOf.set(r.product_id, [...(reviewsOf.get(r.product_id) ?? []), { capturedOn: r.captured_on, value: r.review_count! }]);
 
-  const products = await Promise.all(
-    picked
-      .filter((id) => master.has(id))
-      .map(async (id): Promise<DiscoverProduct | null> => {
-        const [pv, scenarios, risks] = await Promise.all([previewScore(id, keywordId), listScenariosForProduct(id), listActiveRisks(id)]);
-        if (!pv) return null;
-        const m = master.get(id)!;
-        return {
-          id,
-          productName: m.product_name,
-          coupangProductId: m.coupang_product_id,
-          origins: [...(origins.get(id) ?? [])],
-          latestRank: rankOf.get(id) ?? { organic: null, ad: null, capturedOn: null },
-          preview: pv.result,
-          input: pv.input,
-          reviewHistory: reviewsOf.get(id) ?? [],
-          primaryScenario: scenarios.find((s) => s.isPrimary) ?? null,
-          risks,
-        };
-      }),
-  );
+  // PHASE 30: 상품마다 조회가 여러 번이라 100개를 한꺼번에 보내면 요청이 몰린다 → 10개씩
+  const one = async (id: string): Promise<DiscoverProduct | null> => {
+    const [pv, scenarios, risks] = await Promise.all([previewScore(id, keywordId), listScenariosForProduct(id), listActiveRisks(id)]);
+    if (!pv) return null;
+    const m = master.get(id)!;
+    return {
+      id,
+      productName: m.product_name,
+      coupangProductId: m.coupang_product_id,
+      origins: [...(origins.get(id) ?? [])],
+      latestRank: rankOf.get(id) ?? { organic: null, ad: null, capturedOn: null },
+      preview: pv.result,
+      input: pv.input,
+      reviewHistory: reviewsOf.get(id) ?? [],
+      primaryScenario: scenarios.find((s) => s.isPrimary) ?? null,
+      risks,
+    };
+  };
+  const products: (DiscoverProduct | null)[] = [];
+  const todo = picked.filter((id) => master.has(id));
+  for (let i = 0; i < todo.length; i += 10) products.push(...(await Promise.all(todo.slice(i, i + 10).map(one))));
   return { keyword, naver: naver.get(keywordId) ?? null, coupangSearch, products: products.filter((p): p is DiscoverProduct => !!p), totalLinked: ids.length };
 }

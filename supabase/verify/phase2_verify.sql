@@ -752,6 +752,10 @@ begin
 end;
 $$;
 
+select pg_temp.jv_expect_error('PR01 판정 예측 기록은 상품 · 버전 · 기준일마다 1행 (PHASE 30)',
+  format($q$insert into public.predictions (product_id, model_version, target_period_start, target_period_end, sales_predicted)
+            values ('%1$s', 'judge-test', '2026-10-28', '2026-11-26', 100), ('%1$s', 'judge-test', '2026-10-28', '2026-11-26', 200)$q$, pg_temp.jv('p1')),
+  '23505');
 select pg_temp.jv_expect_error('G06 sales_results UNIQUE (listing, period_type, period_start, source)',
   format($q$insert into public.sales_results (listing_id, period_type, period_start, period_end, source_type, confidence)
             values ('%s', 'DAY', '2026-10-01', '2026-10-01', 'WING_SESSION', 'A')$q$, pg_temp.jv('listing')),

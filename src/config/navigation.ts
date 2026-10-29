@@ -1,5 +1,6 @@
 import {
   Calculator,
+  ClipboardCheck,
   Compass,
   FolderTree,
   LayoutDashboard,
@@ -77,6 +78,13 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Star,
     description: "검토 중인 상품 모아보기",
     plannedPhase: 4,
+  },
+  {
+    href: "/validation",
+    label: "판정 검증",
+    icon: ClipboardCheck,
+    description: "판정 · 판매 추정이 실제와 맞았는지 (예측 기록 ↔ 그 뒤 관찰)",
+    plannedPhase: 30,
   },
   {
     href: "/import",

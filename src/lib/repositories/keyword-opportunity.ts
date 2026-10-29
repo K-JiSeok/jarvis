@@ -1,13 +1,13 @@
 import "server-only";
 
 import { effectiveCompliance } from "@/lib/automation/compliance";
-import { judge } from "@/lib/judge/engine";
+import { judge, type JudgeResult } from "@/lib/judge/engine";
 import { keywordOpportunity, KW_OPPORTUNITY_RULES, queueCandidate, sortOpportunities, type KwOpportunity, type QueueCandidate, type QueueSkip } from "@/lib/discover/keyword-opportunity";
 import { fetchAllRows } from "@/lib/supabase/paged";
 import { createClient } from "@/lib/supabase/server";
 
 import { listCompliance } from "./automation";
-import { loadEstimates } from "./estimates";
+import { loadEstimates, type EstimateView } from "./estimates";
 import { listKeywords } from "./keywords";
 import { getMarketSnapshot } from "./market";
 
@@ -24,12 +24,32 @@ export interface KeywordOpportunityRow extends KwOpportunity {
   searchVolume: number | null;
 }
 
-export async function listKeywordOpportunities(): Promise<{ asOf: string; items: KeywordOpportunityRow[]; tracked: number }> {
+export interface JudgedProduct {
+  productId: string;
+  judge: JudgeResult;
+  estimate: EstimateView | null;
+  certification: boolean;
+}
+
+export interface JudgedKeyword {
+  keywordId: string;
+  keyword: string;
+  searchVolume: number | null;
+  volumeHistory: { on: string; value: number }[];
+  snapshot: Awaited<ReturnType<typeof getMarketSnapshot>>;
+  collectedDays: string[];
+  products: JudgedProduct[];
+}
+
+/**
+ * 추적 키워드마다 가장 최근 검색 결과의 등록 상품을 판정 V2 로 계산한다 (PHASE 29 키워드 기회 · PHASE 30 예측 기록이 함께 쓴다).
+ * 상품 발굴 화면과 같은 입력이고 공급 원가는 넣지 않는다.
+ */
+export async function judgeTrackedKeywords(): Promise<{ asOf: string; keywords: JudgedKeyword[] }> {
   const supabase = await createClient();
   const asOf = kstToday();
   const keywords = (await listKeywords()).filter((k) => k.isTracking);
-  const ids = keywords.map((k) => k.id);
-  if (!ids.length) return { asOf, items: [], tracked: 0 };
+  if (!keywords.length) return { asOf, keywords: [] };
 
   const [snapshots, history, days, compliance, brands] = await Promise.all([
     Promise.all(keywords.map(async (k) => [k.id, await getMarketSnapshot(k.id)] as const)),
@@ -52,12 +72,12 @@ export async function listKeywordOpportunities(): Promise<{ asOf: string; items:
   const estimates = await loadEstimates(allIds);
   const nowIso = new Date().toISOString();
 
-  const items: KeywordOpportunityRow[] = keywords.map((k) => {
+  const out: JudgedKeyword[] = keywords.map((k) => {
     const snap = snapOf.get(k.id) ?? null;
     const pids = snap?.productIds ?? [];
     const peerSalesMin = pids.map((id) => estimates.get(id)?.sales.monthly?.min).filter((x): x is number => x != null);
     const history = histOf.get(k.id) ?? [];
-    const products = pids.map((id) => {
+    const products: JudgedProduct[] = pids.map((id) => {
       const e = estimates.get(id);
       const stored = compliance.get(id);
       const comp = effectiveCompliance(
@@ -82,18 +102,26 @@ export async function listKeywordOpportunities(): Promise<{ asOf: string; items:
         searchVolumeHistory: history,
         peerSalesMin,
       });
-      return { verdict: j.verdict, total: j.total, hasSales: e?.sales.monthly != null, certification: comp.status === "REQUIRES_CERTIFICATION" };
+      return { productId: id, judge: j, estimate: e ?? null, certification: comp.status === "REQUIRES_CERTIFICATION" };
     });
+    return { keywordId: k.id, keyword: k.keyword, searchVolume: k.metrics.searchVolume?.value ?? null, volumeHistory: history, snapshot: snap, collectedDays: daysOf.get(k.id) ?? [], products };
+  });
+  return { asOf, keywords: out };
+}
+
+export async function listKeywordOpportunities(): Promise<{ asOf: string; items: KeywordOpportunityRow[]; tracked: number }> {
+  const { asOf, keywords } = await judgeTrackedKeywords();
+  const items: KeywordOpportunityRow[] = keywords.map((k) => {
     const o = keywordOpportunity({
       keyword: k.keyword,
       asOf,
-      searchVolume: k.metrics.searchVolume?.value ?? null,
-      volumeHistory: history,
-      market: snap?.market ?? null,
-      collectedDays: daysOf.get(k.id) ?? [],
-      products,
+      searchVolume: k.searchVolume,
+      volumeHistory: k.volumeHistory,
+      market: k.snapshot?.market ?? null,
+      collectedDays: k.collectedDays,
+      products: k.products.map((p) => ({ verdict: p.judge.verdict, total: p.judge.total, hasSales: p.estimate?.sales.monthly != null, certification: p.certification })),
     });
-    return { ...o, keywordId: k.id, searchVolume: k.metrics.searchVolume?.value ?? null };
+    return { ...o, keywordId: k.keywordId, searchVolume: k.searchVolume };
   });
   return { asOf, items: sortOpportunities(items) as KeywordOpportunityRow[], tracked: keywords.length };
 }
